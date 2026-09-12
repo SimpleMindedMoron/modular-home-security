@@ -1,0 +1,18 @@
+# Arduino / PlatformIO compiled binaries
+*.bin
+*.hex
+*.elf
+*.o
+*.d
+
+# Build artifacts
+build/
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*~

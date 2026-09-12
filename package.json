@@ -1,0 +1,15 @@
+{
+  "name": "modular-home-security",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "securehome-system/command-center/web-dashboard"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=securehome-system/command-center/web-dashboard",
+    "build": "npm run build --workspace=securehome-system/command-center/web-dashboard",
+    "start": "npm run start --workspace=securehome-system/command-center/web-dashboard",
+    "lint": "npm run lint --workspace=securehome-system/command-center/web-dashboard",
+    "ai:start": "cd securehome-system/command-center/ai-processor && python3 main.py"
+  }
+}

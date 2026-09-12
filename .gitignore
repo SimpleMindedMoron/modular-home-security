@@ -1,0 +1,29 @@
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Next.js build output
+.next/
+out/
+build/
+
+# Local environment variables
+.env*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Microcontroller build artifacts
+*.bin
+*.hex
+*.elf
+.pio/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
