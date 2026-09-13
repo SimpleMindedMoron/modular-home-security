@@ -1,40 +1,94 @@
 # 📷 Node 2: Vision Node (ESP32-CAM)
 
-**Assigned to:** Teammate B (Network / Embedded)
+**Assigned to:** Teammate B (Network / Embedded)  
+**Status:** ✅ **Implemented** (`VisionNode/VisionNode.ino`)
 
 ---
 
-## 📂 Where to Add Your Code
-Place your ESP32-CAM sketch folder in this directory:
+## 📂 Project Structure
+
 ```
 securehome-system/vision-node/
 ├── VisionNode/
-│   ├── VisionNode.ino        <-- Put your main ESP32-CAM sketch here
-│   ├── app_httpd.cpp         <-- HTTP MJPEG streaming handler (if separate)
-│   └── (any header files)
-├── README.md
-└── .gitignore
+│   └── VisionNode.ino        # Main ESP32-CAM firmware (WiFiManager, MJPEG, MQTT, NVS)
+├── README.md                 # Node documentation & flashing guide
+└── .gitignore                # Build artifacts & temp files
 ```
+
 > [!NOTE]
-> In Arduino IDE, the primary `.ino` file must reside inside a folder with the **exact same name** (e.g., `VisionNode/VisionNode.ino`).
+> In the Arduino IDE, the primary `.ino` file must reside inside a directory with the exact same name (`VisionNode/VisionNode.ino`).
 
 ---
 
-## 📋 Responsibilities & Hardware
-- **Hardware:** AI-Thinker ESP32-CAM, `ESP32-CAM-MB` Micro-USB shield, 5V / 2A Power Adapter, 100µF+ Electrolytic Capacitor across 5V and GND.
-- **Wiring & Power Reference:** See [docs/wiring-diagrams/pinouts.md](../../docs/wiring-diagrams/pinouts.md).
-- **Core Tasks:**
-  1. Initialize OV2640 camera sensor.
-  2. Implement SoftAP captive portal using `WiFiManager` with a custom parameter to collect the central laptop's MQTT Broker IP.
-  3. Start a local HTTP server streaming MJPEG video over port 81 (or 80) at `/stream`.
-  4. Connect to the Mosquitto MQTT broker:
-     - Configure **Last Will and Testament (LWT)** to publish `"OFFLINE"` to `security/camera/status`.
-     - On connect, publish `"ONLINE"` to `security/camera/status`.
-     - Publish dynamic IP and stream port to `security/camera/discovery` (`{"ip": "192.168.1.X", "port": 81, "stream_path": "/stream"}`).
+## 📋 Responsibilities & Hardware Specs
+
+- **Microcontroller:** AI-Thinker ESP32-CAM (with OV2640 sensor module and on-board PSRAM).
+- **Flashing Shield:** `ESP32-CAM-MB` Micro-USB programmer shield.
+- **Power Supply:** Dedicated 5V / 2A DC wall adapter.
+- **Power Stabilization:** **100µF to 470µF electrolytic capacitor** connected directly across `5V` and `GND` (negative stripe to GND) to absorb Wi-Fi transmission current spikes and prevent brownout reboots.
+- **Wiring & Pinout Reference:** See [docs/wiring-diagrams/pinouts.md](../../docs/wiring-diagrams/pinouts.md).
 
 ---
 
-## 📡 API Contract
-Ensure your MQTT payloads adhere strictly to [docs/api-contract.md](../../docs/api-contract.md):
-- **Publish:** `security/camera/status` -> `"ONLINE"` or `"OFFLINE"` (retained)
-- **Publish:** `security/camera/discovery` -> `{"ip": "192.168.1.X", "port": 81, "stream_path": "/stream"}` (retained)
+## 🧰 Required Arduino IDE Libraries
+
+Install the following libraries via **Arduino IDE Library Manager** (`Ctrl+Shift+I` / `Cmd+Shift+I`):
+
+1. **WiFiManager** (by tzapu) — Handles SoftAP captive portal provisioning.
+2. **PubSubClient** (by Nick O'Leary) — Lightweight MQTT client.
+3. **esp32-camera** (by Espressif) — Included with the official ESP32 Arduino Board Package (`v2.0.x` or `v3.x`).
+
+---
+
+## ⚙️ Arduino IDE Board Configuration
+
+When flashing the AI-Thinker ESP32-CAM, select:
+- **Board:** `AI Thinker ESP32-CAM`
+- **CPU Frequency:** `240MHz (WiFi/BT)`
+- **Flash Frequency:** `80MHz`
+- **Flash Mode:** `QIO`
+- **Partition Scheme:** `Huge APP (3MB No OTA/1MB SPIFFS)` or `Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)`
+- **PSRAM:** `Enabled` ⚠️ *(Critical for VGA 640x480 streaming buffers)*
+- **Upload Speed:** `115200` (or `460800` for faster flashing)
+
+> [!IMPORTANT]
+> If using an FTDI programmer instead of the `ESP32-CAM-MB` shield, bridge `GPIO 0` to `GND` before powering on to enter flashing mode. Disconnect `GPIO 0` from `GND` and press `RST` to run the sketch after upload.
+
+---
+
+## 🚀 Provisioning & First-Time Setup Workflow
+
+1. **First Boot (SoftAP Captive Portal):**
+   - Power on the ESP32-CAM.
+   - If no Wi-Fi credentials are saved, it broadcasts a Wi-Fi Access Point: **`ESP32-Security-Setup`** (no password).
+   - Connect your phone or laptop to this network. A captive portal page opens automatically.
+   - Select your **Home Wi-Fi Network (SSID)** and enter the **Password**.
+   - In the **MQTT Broker IP (Command Center)** field, enter your central server's local IPv4 address (e.g., `192.168.1.100`).
+   - Click **Save**. The ESP32 will reboot and connect to your home Wi-Fi.
+
+2. **Persistent Storage (NVS via `Preferences`):**
+   - The custom MQTT Broker IP is saved in non-volatile flash memory under the `"camera"` namespace.
+   - On subsequent power cycles or reboots, the ESP32-CAM automatically reconnects to Wi-Fi and connects directly to the stored MQTT Broker without opening the portal.
+
+---
+
+## 📡 Networking, Streaming & MQTT Endpoints
+
+### 1. HTTP Video Endpoints
+| Endpoint | Port | Protocol | Description |
+| :--- | :--- | :--- | :--- |
+| `http://<ESP32-IP>:81/stream` | `81` | MJPEG | Multipart video stream consumed by OpenCV AI Processor and Next.js Web Dashboard. |
+| `http://<ESP32-IP>:81/` | `81` | HTML | Built-in test preview page with embedded stream viewer. |
+
+### 2. MQTT Telemetry Topics (Compliant with [docs/api-contract.md](../../docs/api-contract.md))
+| Topic | Payload Format | Retain | Description |
+| :--- | :--- | :--- | :--- |
+| `security/camera/discovery` | `{"node_id":"cam_front_door","ip":"192.168.1.X","port":81,"stream_path":"/stream"}` | `true` | Dynamic IP and port announcement broadcast upon Wi-Fi + MQTT connection. |
+| `security/camera/status` | `"ONLINE"` or `"OFFLINE"` | `true` | Availability state. Configured with MQTT Last Will and Testament (LWT) for automatic `"OFFLINE"` detection on abrupt disconnection. |
+
+---
+
+## 🔄 Reconnecting & Fault Tolerance
+
+- **Wi-Fi Disconnection:** Automatically triggers non-blocking reconnection attempts every 5 seconds without freezing system loop execution.
+- **MQTT Broker Downtime:** If the central Command Center laptop/broker restarts, the Vision Node retries connecting every 5 seconds in the background while keeping the local MJPEG stream active.
