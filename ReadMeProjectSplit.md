@@ -29,8 +29,8 @@ This document outlines the division of labor across the three primary system nod
   4. **Telemetry:** Publish the node's assigned IP address to the MQTT broker on boot, and configure a "Last Will and Testament" (LWT) so the broker knows if the camera goes offline.
 
 ### Node 3: Access Node (Door Lock)
-*Assigned to: Teammate A (Hardware/Embedded)*
-* **Hardware:** ESP32 Dev Board, RC522 RFID (SPI), 4x4 Matrix Keypad, MG90S Servo.
+*Assigned to: Athira (Hardware/Embedded)*
+* **Hardware:** ESP32 Dev Board, RC522 RFID (SPI), 4x3 Matrix Keypad, MG90S Servo.
 * **Responsibilities:**
   1. **Hardware Assembly:** Wire the SPI interface, keypad matrix, and PWM servo without triggering ESP32 strapping pin boot loops.
   2. **Local Auth:** Write C++ logic to validate scanned NFC cards or 4-digit keypad PINs locally.
