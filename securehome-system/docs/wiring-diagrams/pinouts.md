@@ -46,23 +46,23 @@ The Access Node integrates three hardware peripherals:
 | **MISO** | **GPIO 19** | SPI Master In / Slave Out |
 | **MOSI** | **GPIO 23** | SPI Master Out / Slave In |
 | **SCK** | **GPIO 18** | SPI Clock |
-| **SDA (SS)**| **GPIO 5** | SPI Chip Select (Slave Select) |
+| **SDA (SS)**| **GPIO 21** (or GPIO 5) | SPI Chip Select (Slave Select) | GPIO 21 recommended to avoid GPIO 5 strapping pin boot issues |
 
 ---
 
-### 2. 4x4 Matrix Membrane Keypad
-8-pin ribbon cable (4 Rows, 4 Columns). Pins are selected to deliberately avoid ESP32 strapping pins (`GPIO 0`, `GPIO 2`, `GPIO 12`, `GPIO 15`) which can cause boot failure or prevent sketch uploading.
+### 2. Matrix Membrane Keypad (4x3 / 4x4)
+Pins are selected to deliberately avoid ESP32 strapping pins (`GPIO 0`, `GPIO 2`, `GPIO 12`, `GPIO 15`) and input-only pins (GPIO 34-39), which can cause boot failure or prevent sketch uploading.
 
 | Keypad Ribbon Pin | ESP32 Pin | Role | Description |
 | :--- | :--- | :--- | :--- |
-| **Pin 1 (Row 1)** | **GPIO 13** | Input with Pull-up | Keys: 1, 2, 3, A |
-| **Pin 2 (Row 2)** | **GPIO 14** | Input with Pull-up | Keys: 4, 5, 6, B |
-| **Pin 3 (Row 3)** | **GPIO 27** | Input with Pull-up | Keys: 7, 8, 9, C |
-| **Pin 4 (Row 4)** | **GPIO 26** | Input with Pull-up | Keys: *, 0, #, D |
+| **Pin 1 (Row 1)** | **GPIO 13** | Input with Pull-up | Keys: 1, 2, 3 (A) |
+| **Pin 2 (Row 2)** | **GPIO 14** | Input with Pull-up | Keys: 4, 5, 6 (B) |
+| **Pin 3 (Row 3)** | **GPIO 27** | Input with Pull-up | Keys: 7, 8, 9 (C) |
+| **Pin 4 (Row 4)** | **GPIO 26** | Input with Pull-up | Keys: *, 0, # (D) |
 | **Pin 5 (Col 1)** | **GPIO 25** | Output Driven Low | Column 1 scan |
 | **Pin 6 (Col 2)** | **GPIO 33** | Output Driven Low | Column 2 scan |
 | **Pin 7 (Col 3)** | **GPIO 32** | Output Driven Low | Column 3 scan |
-| **Pin 8 (Col 4)** | **GPIO 4** | Output Driven Low | Column 4 scan |
+| **Pin 8 (Col 4)** | **GPIO 4** | Output Driven Low | Optional Column 4 scan (4x4 keypad) |
 
 ---
 
