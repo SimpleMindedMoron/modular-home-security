@@ -65,7 +65,7 @@ const int numAuthorizedPins = sizeof(authorizedPins) / sizeof(authorizedPins[0])
 // GLOBALS & PERIPHERALS
 // =====================================================================
 Preferences preferences;
-char mqttBrokerIP[40] = "192.168.1.100";
+char mqttBrokerIP[40] = "";
 char mqttUser[32] = "";
 char mqttPass[32] = "";
 
@@ -113,10 +113,30 @@ void setupWiFiAndConfig() {
   wm.addParameter(&customMqttPass);
 
   Serial.println("\nStarting Access Node Wi-Fi provisioning...");
-  Serial.println("If not connected, connect to AP: ESP32-DoorLock-Setup");
 
-  // Broadcasts "ESP32-DoorLock-Setup" if no known Wi-Fi is found
-  if (!wm.autoConnect("ESP32-DoorLock-Setup")) {
+  // Check if '*' is pressed on boot to force a factory reset
+  char bootKey = keypad.getKey();
+  if (bootKey == '*') {
+    Serial.println("[*] Keypad '*' pressed on boot. Clearing Wi-Fi & MQTT settings...");
+    wm.resetSettings();
+    preferences.begin("door-cfg", false);
+    preferences.clear();
+    preferences.end();
+    mqttBrokerIP[0] = '\0';
+  }
+
+  bool wifiReady = false;
+  // If MQTT broker IP is missing, force the configuration portal so the user can enter it!
+  if (strlen(mqttBrokerIP) == 0) {
+    Serial.println("\n[!] No MQTT Broker IP found. Starting configuration portal...");
+    Serial.println("[!] Connect to AP 'ESP32-DoorLock-Setup' to enter your Wi-Fi & MQTT Broker IP.");
+    wifiReady = wm.startConfigPortal("ESP32-DoorLock-Setup");
+  } else {
+    Serial.println("Connecting using saved Wi-Fi credentials...");
+    wifiReady = wm.autoConnect("ESP32-DoorLock-Setup");
+  }
+
+  if (!wifiReady) {
     Serial.println("Wi-Fi provisioning failed. Restarting in 3 seconds...");
     delay(3000);
     ESP.restart();
@@ -130,7 +150,7 @@ void setupWiFiAndConfig() {
   strncpy(mqttPass, customMqttPass.getValue(), sizeof(mqttPass) - 1);
   mqttPass[sizeof(mqttPass) - 1] = '\0';
 
-  if (shouldSaveConfig) {
+  if (shouldSaveConfig || strlen(mqttBrokerIP) > 0) {
     preferences.begin("door-cfg", false);
     preferences.putString("mqtt_ip", mqttBrokerIP);
     preferences.putString("mqtt_user", mqttUser);
@@ -279,21 +299,35 @@ void checkKeypad() {
   if (!key) return;
 
   if (key == '#') {
-    if (pinBuffer.length() > 0 && isAuthorizedPin(pinBuffer)) {
+    Serial.printf("\n[Keypad] '#' pressed -> Submitting PIN: \"%s\"\n", pinBuffer.c_str());
+
+    if (pinBuffer == "000000" || pinBuffer == "999999") {
+      Serial.println("[RESET] Factory reset triggered via keypad! Clearing Wi-Fi & MQTT settings...");
+      WiFiManager wm;
+      wm.resetSettings();
+      preferences.begin("door-cfg", false);
+      preferences.clear();
+      preferences.end();
+      Serial.println("Restarting into setup portal in 2 seconds...");
+      delay(2000);
+      ESP.restart();
+    } else if (pinBuffer.length() > 0 && isAuthorizedPin(pinBuffer)) {
+      Serial.printf("[Keypad] PIN \"%s\" MATCHED! Access GRANTED.\n", pinBuffer.c_str());
       unlockDoor("PIN", "Authorized PIN");
     } else {
+      Serial.printf("[Keypad] PIN \"%s\" INVALID. Access DENIED.\n", pinBuffer.c_str());
       publishAccessLog("PIN", false, "Invalid PIN");
-      Serial.println("Access DENIED (wrong or empty PIN)");
     }
     pinBuffer = "";
   } else if (key == '*') {
     pinBuffer = ""; // Clear buffer
-    Serial.println("PIN entry cleared.");
+    Serial.println("\n[Keypad] '*' pressed -> PIN buffer cleared.");
   } else {
     pinBuffer += key;
     if (pinBuffer.length() > 8) {
       pinBuffer = pinBuffer.substring(pinBuffer.length() - 8);
     }
+    Serial.printf("[Keypad] Key: '%c' | Current Buffer: \"%s\"\n", key, pinBuffer.c_str());
   }
 }
 
