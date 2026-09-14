@@ -3,7 +3,6 @@ import { Shield } from 'lucide-react';
 import CameraFeed from '../components/CameraFeed';
 import DoorLock from '../components/DoorLock';
 import AccessLog from '../components/AccessLog';
-import AlertBanner from '../components/AlertBanner';
 
 export default function HomePage() {
   return (
@@ -20,8 +19,6 @@ export default function HomePage() {
       </header>
 
       <div className="dashboard-container">
-        <AlertBanner />
-
         <div className="dashboard-grid">
           <div className="main-column">
             <CameraFeed />

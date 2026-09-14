@@ -9,7 +9,6 @@
     "dev": "npm run dev --workspace=securehome-system/command-center/web-dashboard",
     "build": "npm run build --workspace=securehome-system/command-center/web-dashboard",
     "start": "npm run start --workspace=securehome-system/command-center/web-dashboard",
-    "lint": "npm run lint --workspace=securehome-system/command-center/web-dashboard",
-    "ai:start": "./.venv/bin/python securehome-system/command-center/ai-processor/main.py"
+    "lint": "npm run lint --workspace=securehome-system/command-center/web-dashboard"
   }
 }
