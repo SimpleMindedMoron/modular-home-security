@@ -3,7 +3,7 @@
 [![ESP32](https://img.shields.io/badge/Hardware-ESP32%20%7C%20ESP32--CAM-red.svg)](https://www.espressif.com/)
 [![Next.js](https://img.shields.io/badge/Dashboard-Next.js%2014-black.svg)](https://nextjs.org/)
 [![Python](https://img.shields.io/badge/AI-Python%203.10%2B%20%7C%20OpenCV-blue.svg)](https://opencv.org/)
-[![MQTT](https://img.shields.io/badge/Broker-Mosquitto%20MQTT-orange.svg)](https://mosquitto.org/)
+[![MQTT](https://img.shields.io/badge/Broker-HiveMQ%20Cloud-yellow.svg)](https://www.hivemq.com/mqtt-cloud-broker/)
 [![TypeScript](https://img.shields.io/badge/Language-TypeScript%20%7C%20C%2B%2B-blueviolet.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -19,7 +19,7 @@ A modular, privacy-first smart home security platform built with budget-friendly
 - [📦 Hardware Procurement List (BOM)](#-hardware-procurement-list-bom)
 - [🔌 Hardware Wiring & Pinout Maps](#-hardware-wiring--pinout-maps)
 - [🚀 Quick Start & Running Guide](#-quick-start--running-guide)
-  - [1. Mosquitto MQTT Broker Setup](#1-mosquitto-mqtt-broker-setup)
+  - [1. HiveMQ Cloud Broker Setup](#1-hivemq-cloud-broker-setup)
   - [2. Next.js Command Center Dashboard](#2-nextjs-command-center-dashboard)
   - [3. Python OpenCV AI Detection Service](#3-python-opencv-ai-detection-service)
   - [4. Vision Node Firmware (ESP32-CAM)](#4-vision-node-firmware-esp32-cam)
@@ -32,15 +32,15 @@ A modular, privacy-first smart home security platform built with budget-friendly
 
 ## 🏛️ System Architecture
 
-SecureHome employs an event-driven publish/subscribe topology orchestrated by an **Eclipse Mosquitto MQTT** broker supporting both standard TCP (port `1883`) for embedded nodes and WebSockets (port `9001`) for the browser-based dashboard.
+SecureHome employs an event-driven publish/subscribe topology orchestrated by **HiveMQ Cloud** — a managed MQTT broker accessible from any network over TLS. Embedded nodes connect via secure TCP (port `8883`) and the browser-based dashboard connects via secure WebSockets (port `8884`).
 
 ```
                                   +---------------------------------------+
-                                  |         Central Server / PC           |
+                                  |          HiveMQ Cloud Broker          |
                                   |                                       |
-                                  |   Mosquitto MQTT Broker               |
-                                  |   - Port 1883: TCP (Nodes & AI)       |
-                                  |   - Port 9001: WebSockets (Dashboard) |
+                                  |   *.s1.eu.hivemq.cloud                |
+                                  |   - Port 8883: TLS/TCP (Nodes & AI)  |
+                                  |   - Port 8884: WSS (Dashboard)       |
                                   +-------------------+-------------------+
                                                       |
                   +-----------------------------------+-----------------------------------+
@@ -91,7 +91,7 @@ modular-home-security/
     │       └── pinouts.md                    # Pinout allocations & power bus schematics
     │
     ├── command-center/                       # Command Center node
-    │   ├── mosquitto.conf                    # Dual-listener Mosquitto MQTT broker config
+    │   ├── mosquitto.conf                    # Legacy Mosquitto config (superseded by HiveMQ Cloud)
     │   ├── web-dashboard/                    # Next.js 14 Web Application
     │   │   ├── src/
     │   │   │   ├── app/                      # Next.js App Router (globals.css, layout, page)
@@ -174,21 +174,23 @@ Pin assignments have been deliberately mapped to avoid ESP32 strapping pins (`GP
 - **Host Machine:** Linux / macOS / Windows with a static local IP on your home router.
 - **Node.js:** v18.0.0 or higher.
 - **Python:** v3.10 or higher.
-- **Mosquitto MQTT:** Eclipse Mosquitto broker installed.
+- **HiveMQ Cloud Account:** Free cluster created at [console.hivemq.cloud](https://console.hivemq.cloud) with credentials configured.
 - **Arduino IDE:** v2.0+ with `esp32` board definitions (by Espressif) installed.
 
 ---
 
-### 1. Mosquitto MQTT Broker Setup
+### 1. HiveMQ Cloud Broker Setup
 
-The system includes a pre-configured configuration enabling both TCP (Port 1883) and WebSockets (Port 9001):
+SecureHome uses **HiveMQ Cloud** as its managed MQTT broker — no local broker installation required. The free tier supports up to 100 concurrent connections.
 
-```bash
-# Launch Mosquitto using the project configuration
-mosquitto -c securehome-system/command-center/mosquitto.conf -v
-```
+1. Sign up at [console.hivemq.cloud](https://console.hivemq.cloud) and create a **Serverless** cluster.
+2. Under **Access Management → Credentials**, create a username and password.
+3. Note your cluster's **hostname** (e.g. `xxxx.s1.eu.hivemq.cloud`), **Port 8883** (TLS/TCP), and **Port 8884** (WebSocket TLS).
+4. Fill in the env files for the dashboard and AI processor (see steps 2 and 3 below).
+5. Enter the hostname and credentials in the ESP32 SoftAP provisioning portals (see steps 4 and 5 below).
 
-Ensure your host firewall allows inbound connections on ports `1883` and `9001`.
+> [!NOTE]
+> No firewall rules are needed — all connections are outbound from your devices to HiveMQ Cloud over TLS.
 
 ---
 
@@ -205,11 +207,16 @@ npm run dev
 # http://localhost:3000
 ```
 
-Configure local environment variables if necessary in `securehome-system/command-center/web-dashboard/.env.local`:
+Configure environment variables in `securehome-system/command-center/web-dashboard/.env.local`:
 ```env
-NEXT_PUBLIC_MQTT_URL=ws://localhost:9001
+# HiveMQ Cloud — WebSocket over TLS (wss://)
+NEXT_PUBLIC_MQTT_BROKER_URL=wss://<your-cluster>.s1.eu.hivemq.cloud:8884/mqtt
+NEXT_PUBLIC_MQTT_USER=<your-username>
+NEXT_PUBLIC_MQTT_PASS=<your-password>
+
+# Supabase Authentication & Database Configuration
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 ```
 
 ---
@@ -235,10 +242,19 @@ python main.py
 
 Configure stream and broker settings in `securehome-system/command-center/ai-processor/.env`:
 ```env
-MQTT_BROKER=localhost
-MQTT_PORT=1883
+# HiveMQ Cloud — TLS/TCP
+MQTT_BROKER_HOST=<your-cluster>.s1.eu.hivemq.cloud
+MQTT_PORT=8883
+MQTT_USER=<your-username>
+MQTT_PASS=<your-password>
+MQTT_TLS=true
+
+# Camera stream URL (overridden dynamically via MQTT discovery)
 CAMERA_STREAM_URL=http://192.168.1.145:81/stream
-CONFIDENCE_THRESHOLD=0.70
+
+# Detection Settings
+ALERT_COOLDOWN_SECONDS=10
+MIN_CONFIDENCE=0.5
 ```
 
 ---
@@ -251,8 +267,11 @@ CONFIDENCE_THRESHOLD=0.70
 4. Mount the board onto the `ESP32-CAM-MB` shield and click **Upload**.
 5. **Provisioning:**
    - On first boot, connect your smartphone to the open AP: **`ESP32-Security-Setup`**.
-   - Select your home Wi-Fi and input your Command Center's static MQTT Broker IP.
-   - The device reboots, stores the settings in NVS, connects to Wi-Fi, starts the MJPEG server on port `81`, and publishes its IP to `security/camera/discovery`.
+   - Select your home Wi-Fi, then enter your **HiveMQ Cloud hostname** (e.g. `xxxx.s1.eu.hivemq.cloud`), **username**, and **password** in the portal fields.
+   - The device reboots, stores all settings in NVS flash, connects to Wi-Fi and HiveMQ Cloud over TLS (port `8883`), starts the MJPEG server on port `81`, and publishes its IP to `security/camera/discovery`.
+
+> [!TIP]
+> To force the SoftAP again (e.g. to update credentials), erase the board's flash via **Arduino IDE → Tools → Erase All Flash Before Sketch Upload → Enabled**, then re-upload the sketch.
 
 For more details, see [securehome-system/vision-node/README.md](securehome-system/vision-node/README.md).
 
@@ -271,8 +290,11 @@ For more details, see [securehome-system/vision-node/README.md](securehome-syste
 3. Select board **ESP32 Dev Module** and upload.
 4. **Provisioning:**
    - Connect to the AP: **`ESP32-DoorLock-Setup`**.
-   - Input your Wi-Fi credentials and the MQTT Broker IP.
-   - Click Save; the ESP32 stores credentials in NVS, engages the servo, and subscribes to door commands.
+   - Enter your Wi-Fi credentials, then enter your **HiveMQ Cloud hostname**, **username**, and **password** in the portal fields.
+   - Click Save; the ESP32 stores all credentials in NVS flash, connects to HiveMQ Cloud over TLS (port `8883`), engages the servo, and subscribes to door commands.
+
+> [!TIP]
+> To reset and re-enter credentials: hold `*` on the keypad during boot, or type `000000#` / `999999#` at any time to trigger a factory reset.
 
 For more details, see [securehome-system/access-node/README.md](securehome-system/access-node/README.md).
 
@@ -319,7 +341,7 @@ Each node can be validated independently using **[MQTT Explorer](https://mqtt-ex
 
 ## 👥 Project Team & Attribution
 
-- **Arjun Sanesh** — Project Lead & Full-Stack Engineer (Command Center Web Dashboard, AI Processor, Mosquitto Architecture)
+- **Arjun Sanesh** — Project Lead & Full-Stack Engineer (Command Center Web Dashboard, AI Processor, HiveMQ Cloud Architecture)
 - **Athirasree A S** — Embedded Hardware Engineer (Access Node Firmware, RFID/Keypad SPI & Matrix Integration, Servo PWM)
 - **Ruthvika V** — Network & Systems Engineer (Vision Node ESP32-CAM Firmware, MJPEG Streaming, SoftAP Provisioning)
 
