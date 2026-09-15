@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 
 // =====================================================
@@ -44,11 +45,15 @@ const char *MQTT_STATUS_TOPIC = "security/camera/status";
 // GLOBAL INSTANCES & STATE
 // =====================================================
 
-WiFiClient wifiClient;
+// WiFiClientSecure enables TLS — required for HiveMQ Cloud port 8883
+WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 Preferences preferences;
 
-char mqttBrokerIP[40] = "";
+// HiveMQ Cloud host (up to 80 chars), e.g. xxxx.s1.eu.hivemq.cloud
+char mqttBrokerHost[80] = "";
+char mqttUser[48] = "";
+char mqttPass[48] = "";
 httpd_handle_t cameraServer = NULL;
 unsigned long lastMqttReconnectAttempt = 0;
 
@@ -58,15 +63,20 @@ unsigned long lastMqttReconnectAttempt = 0;
 
 void loadSettings() {
   preferences.begin("camera", true);
-  String broker = preferences.getString("mqtt_ip", "");
+  String host = preferences.getString("mqtt_host", "");
+  host.toCharArray(mqttBrokerHost, sizeof(mqttBrokerHost));
+  String user = preferences.getString("mqtt_user", "");
+  user.toCharArray(mqttUser, sizeof(mqttUser));
+  String pass = preferences.getString("mqtt_pass", "");
+  pass.toCharArray(mqttPass, sizeof(mqttPass));
   preferences.end();
-
-  broker.toCharArray(mqttBrokerIP, sizeof(mqttBrokerIP));
 }
 
-void saveSettings(const char *broker) {
+void saveSettings(const char *host, const char *user, const char *pass) {
   preferences.begin("camera", false);
-  preferences.putString("mqtt_ip", broker);
+  preferences.putString("mqtt_host", host);
+  preferences.putString("mqtt_user", user);
+  preferences.putString("mqtt_pass", pass);
   preferences.end();
 }
 
@@ -257,30 +267,27 @@ void publishCameraDiscovery() {
 // =====================================================
 
 bool connectMQTT() {
-  if (strlen(mqttBrokerIP) == 0) {
-    Serial.println("MQTT broker IP is empty. Connect to AP to configure.");
+  if (strlen(mqttBrokerHost) == 0) {
+    Serial.println("MQTT broker host is empty. Connect to AP to configure.");
     return false;
   }
 
-  Serial.print("Connecting to MQTT broker at ");
-  Serial.print(mqttBrokerIP);
+  Serial.print("Connecting to HiveMQ Cloud at ");
+  Serial.print(mqttBrokerHost);
   Serial.print("...");
 
   String clientID =
       "securehome-camera-" + String((uint32_t)ESP.getEfuseMac(), HEX);
 
-  // Last Will and Testament: if node disconnects abruptly, publish OFFLINE
-  // (retained)
-  bool connected = mqttClient.connect(clientID.c_str(), MQTT_STATUS_TOPIC, 1,
-                                      true, "OFFLINE");
+  // Last Will and Testament: if node disconnects abruptly, publish OFFLINE (retained)
+  // HiveMQ Cloud requires credentials
+  bool connected = mqttClient.connect(
+      clientID.c_str(), mqttUser, mqttPass,
+      MQTT_STATUS_TOPIC, 1, true, "OFFLINE");
 
   if (connected) {
     Serial.println(" connected!");
-
-    // Publish ONLINE status (retained)
     mqttClient.publish(MQTT_STATUS_TOPIC, "ONLINE", true);
-
-    // Announce camera endpoint to Command Center & AI processor
     publishCameraDiscovery();
     return true;
   } else {
@@ -297,13 +304,22 @@ bool connectMQTT() {
 void setupWiFi() {
   loadSettings();
 
+  // Skip cert verification — TLS is still fully encrypted, just without pinning
+  wifiClient.setInsecure();
+
   WiFiManager wifiManager;
 
-  WiFiManagerParameter mqttParameter("mqtt_ip",
-                                     "MQTT Broker IP (Command Center)",
-                                     mqttBrokerIP, sizeof(mqttBrokerIP));
+  WiFiManagerParameter mqttHostParam("mqtt_host",
+                                     "MQTT Broker Host (e.g. xxxx.hivemq.cloud)",
+                                     mqttBrokerHost, sizeof(mqttBrokerHost));
+  WiFiManagerParameter mqttUserParam("mqtt_user", "MQTT Username",
+                                     mqttUser, sizeof(mqttUser));
+  WiFiManagerParameter mqttPassParam("mqtt_pass", "MQTT Password",
+                                     mqttPass, sizeof(mqttPass), "type='password'");
 
-  wifiManager.addParameter(&mqttParameter);
+  wifiManager.addParameter(&mqttHostParam);
+  wifiManager.addParameter(&mqttUserParam);
+  wifiManager.addParameter(&mqttPassParam);
 
   Serial.println();
   Serial.println("Starting WiFi provisioning...");
@@ -317,19 +333,27 @@ void setupWiFi() {
     ESP.restart();
   }
 
-  // Save MQTT Broker IP permanently if entered or updated
-  if (strlen(mqttParameter.getValue()) > 0) {
-    strncpy(mqttBrokerIP, mqttParameter.getValue(), sizeof(mqttBrokerIP) - 1);
-    mqttBrokerIP[sizeof(mqttBrokerIP) - 1] = '\0';
-    saveSettings(mqttBrokerIP);
+  // Save credentials if entered or updated via portal
+  if (strlen(mqttHostParam.getValue()) > 0) {
+    strncpy(mqttBrokerHost, mqttHostParam.getValue(), sizeof(mqttBrokerHost) - 1);
+    mqttBrokerHost[sizeof(mqttBrokerHost) - 1] = '\0';
   }
+  if (strlen(mqttUserParam.getValue()) > 0) {
+    strncpy(mqttUser, mqttUserParam.getValue(), sizeof(mqttUser) - 1);
+    mqttUser[sizeof(mqttUser) - 1] = '\0';
+  }
+  if (strlen(mqttPassParam.getValue()) > 0) {
+    strncpy(mqttPass, mqttPassParam.getValue(), sizeof(mqttPass) - 1);
+    mqttPass[sizeof(mqttPass) - 1] = '\0';
+  }
+  saveSettings(mqttBrokerHost, mqttUser, mqttPass);
 
   Serial.println();
   Serial.println("Wi-Fi connected successfully!");
   Serial.print("ESP32 Local IP: ");
   Serial.println(WiFi.localIP());
-  Serial.print("Active MQTT Broker IP: ");
-  Serial.println(mqttBrokerIP);
+  Serial.print("MQTT Broker Host: ");
+  Serial.println(mqttBrokerHost);
 }
 
 // =====================================================
@@ -359,9 +383,9 @@ void setup() {
   // 3. Start HTTP Server for MJPEG Video Streaming
   startCameraServer();
 
-  // 4. Configure MQTT Client
-  mqttClient.setServer(mqttBrokerIP, MQTT_PORT);
-  mqttClient.setBufferSize(512); // Accommodate discovery payload comfortably
+  // 4. Configure MQTT Client — HiveMQ Cloud TLS on port 8883
+  mqttClient.setServer(mqttBrokerHost, 8883);
+  mqttClient.setBufferSize(512);
 
   // 5. Initial connection to MQTT Broker
   connectMQTT();

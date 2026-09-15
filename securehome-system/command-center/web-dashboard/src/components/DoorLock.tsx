@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Lock, Unlock, KeyRound, RotateCw } from 'lucide-react';
+import { Lock, Unlock, KeyRound, RotateCw, WifiOff } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
 export const DoorLock: React.FC = () => {
   const [lockStatus, setLockStatus] = useState<'LOCKED' | 'UNLOCKED' | 'PENDING'>('LOCKED');
   const [lastActionTime, setLastActionTime] = useState<string>('System initialized');
   const [isCommandSending, setIsCommandSending] = useState<boolean>(false);
+  const [nodeOffline, setNodeOffline] = useState<boolean>(false);
 
   useEffect(() => {
     const client = getMqttClient();
@@ -22,6 +23,7 @@ export const DoorLock: React.FC = () => {
         if (statusStr === 'LOCKED' || statusStr === 'UNLOCKED') {
           setLockStatus(statusStr);
           setIsCommandSending(false);
+          setNodeOffline(false);
           setLastActionTime(new Date().toLocaleTimeString());
         }
       }
@@ -40,20 +42,36 @@ export const DoorLock: React.FC = () => {
 
   const sendCommand = (cmd: 'OPEN' | 'CLOSE') => {
     const client = getMqttClient();
+    // Remember the stable state before PENDING so we can revert on timeout
+    const previousStatus: 'LOCKED' | 'UNLOCKED' = cmd === 'OPEN' ? 'LOCKED' : 'UNLOCKED';
+
     setIsCommandSending(true);
+    setNodeOffline(false);
     setLockStatus('PENDING');
 
     client.publish('security/door/command', cmd, { qos: 1 }, (err) => {
       if (err) {
         console.error('[MQTT] Failed to publish door command:', err);
         setIsCommandSending(false);
+        setLockStatus(previousStatus);
       }
     });
 
-    // Optimistic fallback after 6 seconds if status doesn't arrive
+    // If the Access Node doesn't respond within 7s, revert UI and show a warning
     setTimeout(() => {
-      setIsCommandSending(false);
-    }, 6000);
+      setIsCommandSending((sending) => {
+        if (sending) {
+          console.warn(
+            '[DoorLock] No acknowledgement from Access Node within 7s. ' +
+            'Ensure the ESP32 is on the SAME Wi-Fi network as this machine, ' +
+            'and that its MQTT Broker IP matches this server.'
+          );
+          setLockStatus(previousStatus);
+          setNodeOffline(true);
+        }
+        return false;
+      });
+    }, 7000);
   };
 
   const isLocked = lockStatus === 'LOCKED';
@@ -90,6 +108,16 @@ export const DoorLock: React.FC = () => {
           )}
         </div>
       </header>
+
+      {nodeOffline && (
+        <div className="node-offline-warning">
+          <WifiOff size={14} />
+          <span>
+            <strong>Access Node unreachable.</strong> Ensure the ESP32 is online and its MQTT Broker Host is set to{' '}
+            <code>3f93b8059c60417c83f4edf58d1fa61d.s1.eu.hivemq.cloud</code>.
+          </span>
+        </div>
+      )}
 
       <div className="door-body">
         <div className={`lock-state-box ${isLocked ? 'state-secured' : 'state-unlocked'}`}>

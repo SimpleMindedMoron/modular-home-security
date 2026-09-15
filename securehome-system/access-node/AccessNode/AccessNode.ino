@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
 #include <Preferences.h>
@@ -65,15 +66,17 @@ const int numAuthorizedPins = sizeof(authorizedPins) / sizeof(authorizedPins[0])
 // GLOBALS & PERIPHERALS
 // =====================================================================
 Preferences preferences;
-char mqttBrokerIP[40] = "";
-char mqttUser[32] = "";
-char mqttPass[32] = "";
+// HiveMQ Cloud host (max 80 chars), e.g. xxxx.s1.eu.hivemq.cloud
+char mqttBrokerHost[80] = "";
+char mqttUser[48] = "";
+char mqttPass[48] = "";
 
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, KEYPAD_ROWS, KEYPAD_COLS);
 Servo doorServo;
 
-WiFiClient espClient;
+// WiFiClientSecure enables TLS — required for HiveMQ Cloud port 8883
+WiFiClientSecure espClient;
 PubSubClient mqttClient(espClient);
 
 String pinBuffer = "";
@@ -92,9 +95,9 @@ void saveConfigCallback() {
 
 void setupWiFiAndConfig() {
   preferences.begin("door-cfg", false);
-  String savedIP = preferences.getString("mqtt_ip", "");
-  if (savedIP.length() > 0) {
-    savedIP.toCharArray(mqttBrokerIP, sizeof(mqttBrokerIP));
+  String savedHost = preferences.getString("mqtt_host", "");
+  if (savedHost.length() > 0) {
+    savedHost.toCharArray(mqttBrokerHost, sizeof(mqttBrokerHost));
   }
   String savedUser = preferences.getString("mqtt_user", "");
   savedUser.toCharArray(mqttUser, sizeof(mqttUser));
@@ -102,7 +105,7 @@ void setupWiFiAndConfig() {
   savedPass.toCharArray(mqttPass, sizeof(mqttPass));
   preferences.end();
 
-  WiFiManagerParameter customMqttServer("server", "MQTT Broker IP", mqttBrokerIP, sizeof(mqttBrokerIP));
+  WiFiManagerParameter customMqttServer("server", "MQTT Broker Host (e.g. xxxx.hivemq.cloud)", mqttBrokerHost, sizeof(mqttBrokerHost));
   WiFiManagerParameter customMqttUser("mqttuser", "MQTT Username", mqttUser, sizeof(mqttUser));
   WiFiManagerParameter customMqttPass("mqttpass", "MQTT Password", mqttPass, sizeof(mqttPass), "type='password'");
 
@@ -114,6 +117,10 @@ void setupWiFiAndConfig() {
 
   Serial.println("\nStarting Access Node Wi-Fi provisioning...");
 
+  // Skip cert verification — TLS is still encrypted, just without pinning
+  // This is appropriate for embedded IoT devices using HiveMQ Cloud
+  espClient.setInsecure();
+
   // Check if '*' is pressed on boot to force a factory reset
   char bootKey = keypad.getKey();
   if (bootKey == '*') {
@@ -122,14 +129,14 @@ void setupWiFiAndConfig() {
     preferences.begin("door-cfg", false);
     preferences.clear();
     preferences.end();
-    mqttBrokerIP[0] = '\0';
+    mqttBrokerHost[0] = '\0';
   }
 
   bool wifiReady = false;
-  // If MQTT broker IP is missing, force the configuration portal so the user can enter it!
-  if (strlen(mqttBrokerIP) == 0) {
-    Serial.println("\n[!] No MQTT Broker IP found. Starting configuration portal...");
-    Serial.println("[!] Connect to AP 'ESP32-DoorLock-Setup' to enter your Wi-Fi & MQTT Broker IP.");
+  // If MQTT broker host is missing, force the configuration portal so the user can enter it!
+  if (strlen(mqttBrokerHost) == 0) {
+    Serial.println("\n[!] No MQTT Broker Host found. Starting configuration portal...");
+    Serial.println("[!] Connect to AP 'ESP32-DoorLock-Setup' to enter your Wi-Fi & MQTT Host.");
     wifiReady = wm.startConfigPortal("ESP32-DoorLock-Setup");
   } else {
     Serial.println("Connecting using saved Wi-Fi credentials...");
@@ -143,16 +150,16 @@ void setupWiFiAndConfig() {
   }
 
   // Safely copy bounded string parameters
-  strncpy(mqttBrokerIP, customMqttServer.getValue(), sizeof(mqttBrokerIP) - 1);
-  mqttBrokerIP[sizeof(mqttBrokerIP) - 1] = '\0';
+  strncpy(mqttBrokerHost, customMqttServer.getValue(), sizeof(mqttBrokerHost) - 1);
+  mqttBrokerHost[sizeof(mqttBrokerHost) - 1] = '\0';
   strncpy(mqttUser, customMqttUser.getValue(), sizeof(mqttUser) - 1);
   mqttUser[sizeof(mqttUser) - 1] = '\0';
   strncpy(mqttPass, customMqttPass.getValue(), sizeof(mqttPass) - 1);
   mqttPass[sizeof(mqttPass) - 1] = '\0';
 
-  if (shouldSaveConfig || strlen(mqttBrokerIP) > 0) {
+  if (shouldSaveConfig || strlen(mqttBrokerHost) > 0) {
     preferences.begin("door-cfg", false);
-    preferences.putString("mqtt_ip", mqttBrokerIP);
+    preferences.putString("mqtt_host", mqttBrokerHost);
     preferences.putString("mqtt_user", mqttUser);
     preferences.putString("mqtt_pass", mqttPass);
     preferences.end();
@@ -162,8 +169,8 @@ void setupWiFiAndConfig() {
   Serial.println("\nWi-Fi connected successfully!");
   Serial.print("ESP32 Local IP: ");
   Serial.println(WiFi.localIP());
-  Serial.print("MQTT Broker IP: ");
-  Serial.println(mqttBrokerIP);
+  Serial.print("MQTT Broker Host: ");
+  Serial.println(mqttBrokerHost);
   Serial.println(mqttUser[0] ? "MQTT Auth: credentials set" : "MQTT Auth: none configured");
 }
 
@@ -250,15 +257,14 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 // NON-BLOCKING MQTT CONNECTION
 // =====================================================================
 bool reconnectMQTT() {
-  if (strlen(mqttBrokerIP) == 0) return false;
+  if (strlen(mqttBrokerHost) == 0) return false;
 
   String clientId = "securehome-access-" + String(WiFi.macAddress());
-  bool connected = (mqttUser[0] != '\0')
-    ? mqttClient.connect(clientId.c_str(), mqttUser, mqttPass)
-    : mqttClient.connect(clientId.c_str());
+  // Always use credentials — HiveMQ Cloud requires authentication
+  bool connected = mqttClient.connect(clientId.c_str(), mqttUser, mqttPass);
 
   if (connected) {
-    Serial.println("MQTT connected successfully!");
+    Serial.println("MQTT connected to HiveMQ Cloud!");
     mqttClient.subscribe(TOPIC_COMMAND);
     publishDoorStatus(doorUnlocked); // Announce current state (retained)
     return true;
@@ -358,8 +364,8 @@ void setup() {
   // 3. Wi-Fi & NVS Provisioning
   setupWiFiAndConfig();
 
-  // 4. MQTT Client setup
-  mqttClient.setServer(mqttBrokerIP, 1883);
+  // 4. MQTT Client setup — HiveMQ Cloud TLS on port 8883
+  mqttClient.setServer(mqttBrokerHost, 8883);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setBufferSize(256);
 

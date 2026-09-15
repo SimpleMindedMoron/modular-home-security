@@ -8,17 +8,19 @@ export const getMqttClient = (): MqttClient => {
   }
 
   const brokerUrl =
-    process.env.NEXT_PUBLIC_MQTT_BROKER_URL || 'ws://localhost:9001';
+    process.env.NEXT_PUBLIC_MQTT_BROKER_URL || 'wss://3f93b8059c60417c83f4edf58d1fa61d.s1.eu.hivemq.cloud:8884/mqtt';
 
   client = mqtt.connect(brokerUrl, {
     clientId: `securehome_web_${Math.random().toString(16).substring(2, 8)}`,
+    username: process.env.NEXT_PUBLIC_MQTT_USER || 'simplicity005',
+    password: process.env.NEXT_PUBLIC_MQTT_PASS || 'Hey@Simplicity',
     clean: true,
     reconnectPeriod: 3000,
-    connectTimeout: 5000,
+    connectTimeout: 8000,
   });
 
   client.on('connect', () => {
-    console.log('[MQTT] Connected to broker at', brokerUrl);
+    console.log('[MQTT] Connected to HiveMQ Cloud at', brokerUrl);
   });
 
   client.on('error', (err) => {
@@ -26,7 +28,7 @@ export const getMqttClient = (): MqttClient => {
   });
 
   client.on('offline', () => {
-    console.warn('[MQTT] Client offline');
+    console.warn('[MQTT] Client offline — retrying...');
   });
 
   return client;
