@@ -26,7 +26,7 @@ securehome-system/vision-node/
 - **Flashing Shield:** `ESP32-CAM-MB` Micro-USB programmer shield.
 - **Power Supply:** Dedicated 5V / 2A DC wall adapter.
 - **Power Stabilization:** **100µF to 470µF electrolytic capacitor** connected directly across `5V` and `GND` (negative stripe to GND) to absorb Wi-Fi transmission current spikes and prevent brownout reboots.
-- **Wiring & Pinout Reference:** See [docs/wiring-diagrams/pinouts.md](../../docs/wiring-diagrams/pinouts.md).
+- **Wiring & Pinout Reference:** See [docs/wiring-diagrams/pinouts.md](../docs/wiring-diagrams/pinouts.md).
 
 ---
 
@@ -80,7 +80,7 @@ When flashing the AI-Thinker ESP32-CAM, select:
 | `http://<ESP32-IP>:81/stream` | `81` | MJPEG | Multipart video stream consumed by OpenCV AI Processor and Next.js Web Dashboard. |
 | `http://<ESP32-IP>:81/` | `81` | HTML | Built-in test preview page with embedded stream viewer. |
 
-### 2. MQTT Telemetry Topics (Compliant with [docs/api-contract.md](../../docs/api-contract.md))
+### 2. MQTT Telemetry Topics (Compliant with [docs/api-contract.md](../docs/api-contract.md))
 | Topic | Payload Format | Retain | Description |
 | :--- | :--- | :--- | :--- |
 | `security/camera/discovery` | `{"node_id":"cam_front_door","ip":"192.168.1.X","port":81,"stream_path":"/stream"}` | `true` | Dynamic IP and port announcement broadcast upon Wi-Fi + MQTT connection. |

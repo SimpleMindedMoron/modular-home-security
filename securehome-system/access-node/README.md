@@ -27,7 +27,7 @@ securehome-system/access-node/
   1. **RC522 RFID Module (SPI):** 3.3V logic (never connect VCC to 5V).
   2. **Matrix Membrane Keypad:** 4x3 configuration (Rows: GPIO 13, 14, 27, 26 | Columns: GPIO 25, 33, 32).
   3. **MG90S Micro Servo:** Driven via 50Hz PWM on GPIO 16 (powered via external 5V rail / VIN with shared ground).
-- **Wiring & Power Reference:** See [docs/wiring-diagrams/pinouts.md](../../docs/wiring-diagrams/pinouts.md).
+- **Wiring & Power Reference:** See [docs/wiring-diagrams/pinouts.md](../docs/wiring-diagrams/pinouts.md).
 
 ---
 
