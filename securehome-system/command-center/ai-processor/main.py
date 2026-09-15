@@ -4,10 +4,12 @@ SecureHome AI Processor Service
 Node 1 - Command Center: Person Detection Module
 
 Consumes the ESP32-CAM MJPEG HTTP stream, performs computer vision person detection
-using OpenCV HOG/SVM, and publishes alert payloads to the local Mosquitto MQTT broker.
+using OpenCV HOG/SVM, and publishes alert payloads to the HiveMQ Cloud MQTT broker
+over TLS (port 8883).
 """
 
 import os
+import ssl
 import sys
 import time
 import json
@@ -29,8 +31,10 @@ logging.basicConfig(
 logger = logging.getLogger('AI-Processor')
 
 # Configuration from Environment
-MQTT_BROKER_IP = os.getenv('MQTT_BROKER_IP', '127.0.0.1')
-MQTT_PORT = int(os.getenv('MQTT_PORT', 1883))
+MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', 'localhost')
+MQTT_PORT = int(os.getenv('MQTT_PORT', 8883))
+MQTT_USER = os.getenv('MQTT_USER', '')
+MQTT_PASS = os.getenv('MQTT_PASS', '')
 CAMERA_STREAM_URL = os.getenv('CAMERA_STREAM_URL', 'http://192.168.1.145:81/stream')
 TOPIC_CAMERA_DISCOVERY = os.getenv('TOPIC_CAMERA_DISCOVERY', 'security/camera/discovery')
 TOPIC_PERSON_ALERT = os.getenv('TOPIC_PERSON_ALERT', 'security/alerts/person')
@@ -52,7 +56,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
-    logger.info(f"Connected to MQTT broker at {MQTT_BROKER_IP}:{MQTT_PORT}")
+    logger.info(f"Connected to HiveMQ Cloud at {MQTT_BROKER_HOST}:{MQTT_PORT}")
     client.subscribe(TOPIC_CAMERA_DISCOVERY)
     logger.info(f"Subscribed to dynamic camera discovery topic: {TOPIC_CAMERA_DISCOVERY}")
 
@@ -86,17 +90,24 @@ def main():
 
     logger.info("Initializing SecureHome AI Person Detection Service...")
 
-    # MQTT Setup
+    # MQTT Setup — HiveMQ Cloud requires TLS + authentication
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="securehome_ai_processor")
     client.on_connect = on_mqtt_connect
     client.on_message = on_mqtt_message
 
+    # Enable TLS (certificate verification against system CA bundle)
+    client.tls_set(cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+
+    # Set HiveMQ Cloud credentials
+    if MQTT_USER:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+
     try:
-        client.connect(MQTT_BROKER_IP, MQTT_PORT, 60)
+        client.connect(MQTT_BROKER_HOST, MQTT_PORT, 60)
         client.loop_start()
     except Exception as e:
-        logger.error(f"Could not connect to MQTT broker at {MQTT_BROKER_IP}:{MQTT_PORT}: {e}")
-        logger.info("Make sure Eclipse Mosquitto is running on port 1883.")
+        logger.error(f"Could not connect to HiveMQ Cloud at {MQTT_BROKER_HOST}:{MQTT_PORT}: {e}")
+        logger.info("Check MQTT_BROKER_HOST, MQTT_USER, MQTT_PASS in your .env file.")
         return 1
 
     detector = init_person_detector()
