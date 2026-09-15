@@ -319,9 +319,6 @@ Each node can be validated independently using **[MQTT Explorer](https://mqtt-ex
 
 ## 👥 Project Team & Attribution
 
-**Team SuperUser Programmers**  
-*Amrita Vishwa Vidyapeetham (AVV)*
-
 - **Arjun Sanesh** — Project Lead & Full-Stack Engineer (Command Center Web Dashboard, AI Processor, Mosquitto Architecture)
 - **Athirasree A S** — Embedded Hardware Engineer (Access Node Firmware, RFID/Keypad SPI & Matrix Integration, Servo PWM)
 - **Ruthvika V** — Network & Systems Engineer (Vision Node ESP32-CAM Firmware, MJPEG Streaming, SoftAP Provisioning)
