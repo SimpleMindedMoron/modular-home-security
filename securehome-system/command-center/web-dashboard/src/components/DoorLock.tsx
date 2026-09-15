@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Lock, Unlock, ShieldAlert, KeyRound } from 'lucide-react';
+import { Lock, Unlock, KeyRound, RotateCw } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
 export const DoorLock: React.FC = () => {
@@ -59,49 +59,91 @@ export const DoorLock: React.FC = () => {
   const isLocked = lockStatus === 'LOCKED';
 
   return (
-    <div className={`card door-card ${isLocked ? 'state-locked' : 'state-unlocked'}`}>
-      <div className="card-header">
+    <section className="card door-card" aria-label="Access Control">
+      <header className="card-header">
         <div className="card-title">
-          <KeyRound className="icon" size={20} />
-          <h3>Access Control</h3>
+          <div className="card-title-icon">
+            <KeyRound size={16} />
+          </div>
+          <div>
+            <h3>Access Control</h3>
+            <span className="card-subtitle">Node 03 &bull; Deadbolt Actuator</span>
+          </div>
         </div>
-        <span className={`status-pill pill-${lockStatus.toLowerCase()}`}>
-          {lockStatus}
-        </span>
-      </div>
+
+        <div className={`status-badge status-${lockStatus.toLowerCase()}`}>
+          {lockStatus === 'PENDING' ? (
+            <>
+              <RotateCw size={12} className="spin-icon" />
+              <span>PENDING</span>
+            </>
+          ) : isLocked ? (
+            <>
+              <span className="status-dot dot-secured" />
+              <span>SECURED</span>
+            </>
+          ) : (
+            <>
+              <span className="status-dot dot-unlocked" />
+              <span>UNLOCKED</span>
+            </>
+          )}
+        </div>
+      </header>
 
       <div className="door-body">
-        <div className={`lock-icon-wrapper ${isLocked ? 'locked' : 'unlocked'}`}>
-          {isLocked ? <Lock size={56} /> : <Unlock size={56} />}
+        <div className={`lock-state-box ${isLocked ? 'state-secured' : 'state-unlocked'}`}>
+          {isLocked ? <Lock size={22} /> : <Unlock size={22} />}
         </div>
-        <div className="lock-info">
+        <div className="lock-details">
           <h4>Front Entrance Deadbolt</h4>
-          <p className="timestamp-label">Last event: {lastActionTime}</p>
+          <span className="lock-subtext">5s Pulse Auto-Relock Enabled</span>
+          <span className="timestamp-label">Event: {lastActionTime}</span>
         </div>
       </div>
 
       <div className="door-controls">
         {isLocked ? (
           <button
-            className="btn btn-unlock"
+            type="button"
+            className="btn-control btn-unlock"
             disabled={isCommandSending}
             onClick={() => sendCommand('OPEN')}
           >
-            <Unlock size={18} />
-            {isCommandSending ? 'Unlocking...' : 'Unlock Door (5s Pulse)'}
+            {isCommandSending ? (
+              <>
+                <RotateCw size={15} className="spin-icon" />
+                <span>Transmitting Command...</span>
+              </>
+            ) : (
+              <>
+                <Unlock size={15} />
+                <span>Unlock Door (5s Pulse)</span>
+              </>
+            )}
           </button>
         ) : (
           <button
-            className="btn btn-lock"
+            type="button"
+            className="btn-control btn-lock"
             disabled={isCommandSending}
             onClick={() => sendCommand('CLOSE')}
           >
-            <Lock size={18} />
-            {isCommandSending ? 'Locking...' : 'Force Lock'}
+            {isCommandSending ? (
+              <>
+                <RotateCw size={15} className="spin-icon" />
+                <span>Transmitting Command...</span>
+              </>
+            ) : (
+              <>
+                <Lock size={15} />
+                <span>Engage Lock Immediately</span>
+              </>
+            )}
           </button>
         )}
       </div>
-    </div>
+    </section>
   );
 };
 

@@ -9,9 +9,11 @@ import {
   ExternalLink,
   Settings,
   Maximize2,
-  AlertCircle,
   Play,
   RotateCw,
+  Info,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
@@ -23,6 +25,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
   const [streamUrl, setStreamUrl] = useState<string>(initialStreamUrl || '');
   const [inputUrl, setInputUrl] = useState<string>('');
   const [showConfig, setShowConfig] = useState<boolean>(false);
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
   const [status, setStatus] = useState<'ONLINE' | 'OFFLINE' | 'CONNECTING' | 'RECONNECTING'>('CONNECTING');
   const [lastUpdated, setLastUpdated] = useState<string>('Never');
   const [retryCount, setRetryCount] = useState<number>(0);
@@ -104,7 +107,6 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
     if (!inputUrl.trim()) return;
 
     let target = inputUrl.trim();
-    // If user just typed an IP address like 192.168.1.50 or 192.168.1.50:81
     if (!target.startsWith('http://') && !target.startsWith('https://')) {
       if (target.includes(':')) {
         target = `http://${target}/stream`;
@@ -163,58 +165,67 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
   const directBaseUrl = streamUrl ? streamUrl.replace(/\/stream.*$/, '/') : '';
 
   return (
-    <div className="card camera-card">
-      <div className="card-header">
+    <section className="card camera-card" aria-label="Live Camera Feed">
+      <header className="card-header">
         <div className="card-title">
-          <Camera className="icon" size={20} />
-          <h3>Live Camera Feed</h3>
+          <div className="card-title-icon">
+            <Camera size={16} />
+          </div>
+          <div>
+            <h3>Video Surveillance</h3>
+            <span className="card-subtitle">Node 02 &bull; Front Entrance</span>
+          </div>
         </div>
 
         <div className="header-controls">
           <div className={`status-badge status-${status.toLowerCase()}`}>
             {status === 'ONLINE' ? (
               <>
-                <Wifi size={14} />
+                <span className="status-dot dot-online" />
                 <span>ONLINE</span>
               </>
             ) : status === 'RECONNECTING' ? (
               <>
-                <RotateCw size={14} className="spin-icon" />
+                <RotateCw size={12} className="spin-icon" />
                 <span>RETRYING ({retryCount}/3)</span>
               </>
             ) : (
               <>
-                <WifiOff size={14} />
+                <span className="status-dot dot-offline" />
                 <span>{status}</span>
               </>
             )}
           </div>
 
           <button
+            type="button"
             className={`btn-icon ${showConfig ? 'active' : ''}`}
             onClick={() => setShowConfig(!showConfig)}
             title="Configure Camera IP / Stream URL"
+            aria-label="Configure Camera IP"
           >
-            <Settings size={16} />
+            <Settings size={15} />
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Manual IP / URL Input Drawer */}
       {showConfig && (
         <form onSubmit={handleApplyManualUrl} className="camera-config-bar">
           <div className="config-input-group">
-            <label htmlFor="cam-ip-input">Camera IP or Stream URL:</label>
+            <label htmlFor="cam-ip-input">Manual Stream IP or Endpoint:</label>
             <input
               id="cam-ip-input"
               type="text"
               placeholder="e.g. 192.168.1.150 or http://192.168.1.150:81/stream"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
             />
           </div>
           <button type="submit" className="btn-set-stream">
-            <Play size={14} /> Set Feed
+            <Play size={13} /> Set Feed
           </button>
         </form>
       )}
@@ -226,7 +237,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
             <img
               key={streamKey}
               src={`${streamUrl}${streamUrl.includes('?') ? '&' : '?'}_t=${streamKey}`}
-              alt="ESP32-CAM MJPEG Stream"
+              alt="ESP32-CAM MJPEG Video Stream"
               className="video-feed"
               onLoad={() => {
                 setStatus('ONLINE');
@@ -235,57 +246,78 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
               onError={handleImageError}
             />
             <div className="stream-overlay-badge">
-              <span className="live-dot" /> LIVE
+              <span className="live-dot" />
+              <span>LIVE</span>
             </div>
           </>
         ) : (
           <div className="video-placeholder">
-            <Camera size={48} className="placeholder-icon" />
-            <p>
+            <div className="placeholder-icon-wrap">
+              <Camera size={32} />
+            </div>
+            <h4>
               {status === 'OFFLINE'
-                ? 'Camera stream disconnected'
-                : 'Waiting for camera discovery or manual IP...'}
+                ? 'Camera Disconnected'
+                : 'Waiting for Camera Telemetry'}
+            </h4>
+            <p className="placeholder-desc">
+              {status === 'OFFLINE'
+                ? 'The MJPEG stream timed out. Ensure the ESP32-CAM is powered and connected.'
+                : 'Listening for discovery broadcast or manual IP assignment.'}
             </p>
 
             <div className="placeholder-actions">
               {streamUrl && (
-                <button className="btn-retry" onClick={triggerRefresh}>
-                  <RefreshCw size={14} /> Reconnect Feed
+                <button type="button" className="btn-secondary" onClick={triggerRefresh}>
+                  <RefreshCw size={13} /> Reconnect
                 </button>
               )}
               <button
-                className="btn-set-ip-hint"
+                type="button"
+                className="btn-secondary"
                 onClick={() => setShowConfig(true)}
               >
-                Enter Camera IP Manually
+                Set IP Manually
               </button>
             </div>
 
-            <div className="placeholder-diagnostics">
-              <span>💡 Troubleshooting:</span>
-              <ul>
-                <li>Ensure ESP32-CAM is powered with a 5V/2A adapter</li>
-                <li>Check Arduino IDE Serial Monitor (115200 baud) for assigned IP</li>
-                <li>Verify your PC and ESP32-CAM are on the same Wi-Fi network</li>
-              </ul>
+            <div className="diagnostics-toggle-container">
+              <button
+                type="button"
+                className="btn-text-toggle"
+                onClick={() => setShowDiagnostics(!showDiagnostics)}
+              >
+                <Info size={13} />
+                <span>Connection Diagnostics</span>
+                {showDiagnostics ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+
+              {showDiagnostics && (
+                <ul className="diagnostics-list">
+                  <li>Verify ESP32-CAM is powered by dedicated 5V/2A supply</li>
+                  <li>Confirm 100µF+ decoupling capacitor across 5V and GND</li>
+                  <li>Check Serial Monitor (115200 baud) for IP assigned by router</li>
+                  <li>Verify Command Center host and ESP32 share the same subnet</li>
+                </ul>
+              )}
             </div>
           </div>
         )}
       </div>
 
       {/* Footer Details & Action Controls */}
-      <div className="card-footer">
+      <footer className="card-footer">
         <div className="endpoint-details">
-          <span className="endpoint-text">
-            Source:{' '}
+          <div className="endpoint-row">
+            <span className="meta-label">SOURCE</span>
             {streamUrl ? (
-              <code>{streamUrl}</code>
+              <code className="endpoint-code">{streamUrl}</code>
             ) : (
-              <em>Not configured yet (click ⚙️ above or power on ESP32-CAM)</em>
+              <span className="endpoint-empty">Unconfigured</span>
             )}
-          </span>
+          </div>
           {lastUpdated !== 'Never' && (
-            <span className="updated-text">Updated: {lastUpdated}</span>
+            <span className="updated-text">Updated {lastUpdated}</span>
           )}
         </div>
 
@@ -295,34 +327,38 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
               href={directBaseUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="btn-link"
+              className="btn-action-sm"
               title="Open camera web preview directly in a new tab"
             >
-              <ExternalLink size={14} /> Test in Tab
+              <ExternalLink size={13} />
+              <span>Preview</span>
             </a>
           )}
 
           <button
-            className="btn-refresh"
+            type="button"
+            className="btn-action-sm"
             onClick={triggerRefresh}
             title="Refresh stream connection"
             disabled={!streamUrl}
           >
-            <RefreshCw size={14} /> Refresh
+            <RefreshCw size={13} />
+            <span>Refresh</span>
           </button>
 
           <button
-            className="btn-icon-control"
+            type="button"
+            className="btn-action-sm btn-action-icon-only"
             onClick={toggleFullscreen}
             title="Toggle fullscreen mode"
+            aria-label="Toggle fullscreen"
           >
-            <Maximize2 size={14} />
+            <Maximize2 size={13} />
           </button>
         </div>
-      </div>
-    </div>
+      </footer>
+    </section>
   );
 };
 
 export default CameraFeed;
-

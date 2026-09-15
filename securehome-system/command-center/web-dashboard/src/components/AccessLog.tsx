@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, ShieldX, History, CreditCard, Hash } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, History, CreditCard, Hash, Terminal } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
 export interface AccessEntry {
@@ -27,13 +27,13 @@ export const AccessLog: React.FC = () => {
         try {
           const payload = JSON.parse(message.toString());
           const newEntry: AccessEntry = {
-            id: `${Date.now()}_${Math.random()}`,
-            method: payload.method || 'UNKNOWN',
+            id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            method: (payload.method || 'LOCAL').toUpperCase(),
             status: payload.status?.toUpperCase() === 'GRANTED' ? 'GRANTED' : 'DENIED',
-            identifier: payload.identifier || 'Local Input',
+            identifier: payload.identifier || 'Manual Input',
             timestamp: new Date().toLocaleTimeString(),
           };
-          setLogs((prev) => [newEntry, ...prev.slice(0, 19)]);
+          setLogs((prev) => [newEntry, ...prev.slice(0, 24)]);
         } catch (e) {
           console.error('[MQTT] Error parsing access log payload:', e);
         }
@@ -51,54 +51,77 @@ export const AccessLog: React.FC = () => {
     };
   }, []);
 
+  const renderMethodIcon = (method: string) => {
+    switch (method) {
+      case 'RFID':
+        return <CreditCard size={12} />;
+      case 'PIN':
+        return <Hash size={12} />;
+      case 'REMOTE':
+        return <Terminal size={12} />;
+      default:
+        return <Hash size={12} />;
+    }
+  };
+
   return (
-    <div className="card log-card">
-      <div className="card-header">
+    <section className="card log-card" aria-label="Access Activity Log">
+      <header className="card-header">
         <div className="card-title">
-          <History className="icon" size={20} />
-          <h3>Live Access Activity</h3>
+          <div className="card-title-icon">
+            <History size={16} />
+          </div>
+          <div>
+            <h3>Activity Log</h3>
+            <span className="card-subtitle">Real-Time Access Audit</span>
+          </div>
         </div>
-        <span className="log-count-badge">{logs.length} events</span>
-      </div>
+        <span className="log-count-pill">{logs.length} events</span>
+      </header>
 
       <div className="log-list">
         {logs.length === 0 ? (
           <div className="empty-logs">
-            <p>No entry events recorded yet</p>
-            <span>Scan an NFC card or enter a PIN on the Access Node</span>
+            <History size={28} className="empty-log-icon" />
+            <p className="empty-log-title">No Events Recorded</p>
+            <span className="empty-log-desc">
+              Scan an NFC card or enter a PIN on the Access Node to log events.
+            </span>
           </div>
         ) : (
           logs.map((entry) => (
-            <div
+            <article
               key={entry.id}
-              className={`log-item ${entry.status === 'GRANTED' ? 'log-granted' : 'log-denied'}`}
+              className={`log-item log-item-${entry.status.toLowerCase()}`}
             >
-              <div className="log-icon">
+              <div className="log-method-badge">
+                {renderMethodIcon(entry.method)}
+                <span>{entry.method}</span>
+              </div>
+
+              <div className="log-info">
+                <span className="log-identifier">{entry.identifier}</span>
+                <span className="log-timestamp">{entry.timestamp}</span>
+              </div>
+
+              <div className={`log-verdict verdict-${entry.status.toLowerCase()}`}>
                 {entry.status === 'GRANTED' ? (
-                  <ShieldCheck size={18} className="granted-icon" />
+                  <>
+                    <ShieldCheck size={13} />
+                    <span>Granted</span>
+                  </>
                 ) : (
-                  <ShieldX size={18} className="denied-icon" />
+                  <>
+                    <ShieldAlert size={13} />
+                    <span>Denied</span>
+                  </>
                 )}
               </div>
-              <div className="log-details">
-                <div className="log-primary">
-                  <span className="method-tag">
-                    {entry.method === 'RFID' ? <CreditCard size={12} /> : <Hash size={12} />}
-                    {entry.method}
-                  </span>
-                  <span className={`status-text status-${entry.status.toLowerCase()}`}>
-                    {entry.status}
-                  </span>
-                </div>
-                <span className="log-meta">
-                  {entry.identifier} &bull; {entry.timestamp}
-                </span>
-              </div>
-            </div>
+            </article>
           ))
         )}
       </div>
-    </div>
+    </section>
   );
 };
 

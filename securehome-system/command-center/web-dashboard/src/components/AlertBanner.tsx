@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, UserCheck, X } from 'lucide-react';
+import { AlertTriangle, X, ShieldAlert } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
 export const AlertBanner: React.FC = () => {
@@ -23,15 +23,15 @@ export const AlertBanner: React.FC = () => {
         try {
           const payload = JSON.parse(message.toString());
           setAlert({
-            camera: payload.camera || 'Vision Node',
+            camera: payload.camera || 'Front Camera',
             confidence: payload.confidence ? Math.round(payload.confidence * 100) : 95,
             timestamp: payload.timestamp || new Date().toLocaleTimeString(),
           });
 
-          // Auto-dismiss alert after 10 seconds
+          // Auto-dismiss alert after 12 seconds
           const timer = setTimeout(() => {
             setAlert(null);
-          }, 10000);
+          }, 12000);
 
           return () => clearTimeout(timer);
         } catch (e) {
@@ -54,23 +54,26 @@ export const AlertBanner: React.FC = () => {
   if (!alert) return null;
 
   return (
-    <div className="alert-banner">
-      <div className="alert-content">
-        <div className="alert-icon-wrap">
-          <AlertTriangle size={22} className="alert-pulse" />
+    <aside className="alert-strip" role="alert" aria-live="assertive">
+      <div className="alert-strip-content">
+        <div className="alert-strip-badge">
+          <AlertTriangle size={14} />
+          <span>SECURITY ALERT</span>
         </div>
-        <div className="alert-details">
-          <strong>Person Detected!</strong>
-          <span>
-            {alert.camera} reported human presence ({alert.confidence}% confidence) at{' '}
-            {alert.timestamp}
-          </span>
-        </div>
+        <p className="alert-strip-message">
+          <strong>Person Detected:</strong> {alert.camera} detected human presence ({alert.confidence}% confidence) at{' '}
+          <span className="alert-strip-time">{alert.timestamp}</span>.
+        </p>
       </div>
-      <button className="alert-close" onClick={() => setAlert(null)} aria-label="Dismiss alert">
-        <X size={18} />
+      <button
+        type="button"
+        className="alert-strip-dismiss"
+        onClick={() => setAlert(null)}
+        aria-label="Dismiss security alert"
+      >
+        <X size={15} />
       </button>
-    </div>
+    </aside>
   );
 };
 
