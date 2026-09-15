@@ -7,7 +7,9 @@ package-lock.json
 out/
 build/
 
-# Local environment variables
+# Local environment variables (never commit secrets)
+.env
+.env.local
 .env*.local
 
 # Python
