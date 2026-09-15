@@ -23,6 +23,8 @@ interface CameraFeedProps {
 
 export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
   const [streamUrl, setStreamUrl] = useState<string>(initialStreamUrl || '');
+  const [relayUrl, setRelayUrl] = useState<string>('');
+  const [streamSource, setStreamSource] = useState<'LOCAL' | 'RELAY' | 'MANUAL'>('LOCAL');
   const [inputUrl, setInputUrl] = useState<string>('');
   const [showConfig, setShowConfig] = useState<boolean>(false);
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
@@ -34,25 +36,53 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
 
   // Load saved stream URL from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem('securehome_camera_stream_url');
-    if (saved && !initialStreamUrl) {
-      setStreamUrl(saved);
-      setInputUrl(saved);
+    const savedRelay = localStorage.getItem('securehome_camera_relay_url');
+    const savedLocal = localStorage.getItem('securehome_camera_stream_url');
+    if (savedRelay && !initialStreamUrl) {
+      setRelayUrl(savedRelay);
+      setStreamUrl(savedRelay);
+      setInputUrl(savedRelay);
+      setStreamSource('RELAY');
+      setStatus('ONLINE');
+    } else if (savedLocal && !initialStreamUrl) {
+      setStreamUrl(savedLocal);
+      setInputUrl(savedLocal);
+      setStreamSource('LOCAL');
       setStatus('ONLINE');
     }
   }, [initialStreamUrl]);
 
-  // MQTT auto-discovery & status telemetry
+  // MQTT auto-discovery, relay URL & status telemetry
   useEffect(() => {
     const client = getMqttClient();
 
     const onConnect = () => {
       client.subscribe('security/camera/discovery');
       client.subscribe('security/camera/status');
+      client.subscribe('security/camera/relay_url');
     };
 
     const onMessage = (topic: string, message: Buffer) => {
       const msgStr = message.toString();
+
+      if (topic === 'security/camera/relay_url') {
+        try {
+          const data = JSON.parse(msgStr);
+          if (data.url) {
+            setRelayUrl(data.url);
+            setStreamUrl(data.url);
+            setInputUrl(data.url);
+            setStreamSource('RELAY');
+            localStorage.setItem('securehome_camera_relay_url', data.url);
+            setStatus('ONLINE');
+            setRetryCount(0);
+            setStreamKey(Date.now());
+            setLastUpdated(new Date().toLocaleTimeString());
+          }
+        } catch {
+          // ignore malformed payload
+        }
+      }
 
       if (topic === 'security/camera/discovery') {
         try {
@@ -61,21 +91,29 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
             const port = data.port || 81;
             const path = data.stream_path || '/stream';
             const url = `http://${data.ip}:${port}${path}`;
+            // Only use local URL if no relay is available
+            if (!relayUrl) {
+              setStreamUrl(url);
+              setInputUrl(url);
+              setStreamSource('LOCAL');
+              setStatus('ONLINE');
+              setRetryCount(0);
+              setStreamKey(Date.now());
+              setLastUpdated(new Date().toLocaleTimeString());
+            }
+            localStorage.setItem('securehome_camera_stream_url', url);
+          }
+        } catch {
+          const url = msgStr.startsWith('http') ? msgStr : `http://${msgStr}/stream`;
+          if (!relayUrl) {
             setStreamUrl(url);
             setInputUrl(url);
-            localStorage.setItem('securehome_camera_stream_url', url);
+            setStreamSource('LOCAL');
             setStatus('ONLINE');
             setRetryCount(0);
             setLastUpdated(new Date().toLocaleTimeString());
           }
-        } catch {
-          const url = msgStr.startsWith('http') ? msgStr : `http://${msgStr}/stream`;
-          setStreamUrl(url);
-          setInputUrl(url);
           localStorage.setItem('securehome_camera_stream_url', url);
-          setStatus('ONLINE');
-          setRetryCount(0);
-          setLastUpdated(new Date().toLocaleTimeString());
         }
       }
 
@@ -99,7 +137,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
     return () => {
       client.off('message', onMessage);
     };
-  }, []);
+  }, [relayUrl]);
 
   // Format and save manual URL/IP input
   const handleApplyManualUrl = (e: React.FormEvent) => {
@@ -115,8 +153,12 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
       }
     }
 
+    // Manual override clears the relay preference
+    setRelayUrl('');
+    localStorage.removeItem('securehome_camera_relay_url');
     setStreamUrl(target);
     setInputUrl(target);
+    setStreamSource('MANUAL');
     localStorage.setItem('securehome_camera_stream_url', target);
     setStatus('ONLINE');
     setRetryCount(0);
@@ -316,9 +358,25 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
               <span className="endpoint-empty">Unconfigured</span>
             )}
           </div>
-          {lastUpdated !== 'Never' && (
-            <span className="updated-text">Updated {lastUpdated}</span>
-          )}
+          <div className="endpoint-row">
+            {streamUrl && (
+              <span
+                className={`source-badge source-badge--${streamSource.toLowerCase()}`}
+                title={
+                  streamSource === 'RELAY'
+                    ? 'Stream served via ngrok relay — works from any network'
+                    : streamSource === 'LOCAL'
+                    ? 'Stream served directly from local IP — home network only'
+                    : 'Manually configured stream URL'
+                }
+              >
+                {streamSource === 'RELAY' ? '🌐 RELAY' : streamSource === 'LOCAL' ? '🏠 LOCAL' : '✏️ MANUAL'}
+              </span>
+            )}
+            {lastUpdated !== 'Never' && (
+              <span className="updated-text">Updated {lastUpdated}</span>
+            )}
+          </div>
         </div>
 
         <div className="feed-actions">

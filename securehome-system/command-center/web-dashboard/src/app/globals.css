@@ -760,6 +760,37 @@ pre,
   color: var(--text-muted);
 }
 
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.source-badge--relay {
+  background: rgba(99, 220, 160, 0.15);
+  color: #63dca0;
+  border: 1px solid rgba(99, 220, 160, 0.3);
+}
+
+.source-badge--local {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.source-badge--manual {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+
 .feed-actions {
   display: flex;
   align-items: center;
