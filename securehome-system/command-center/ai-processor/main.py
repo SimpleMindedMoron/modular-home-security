@@ -55,6 +55,19 @@ ALERT_COOLDOWN_SECONDS    = float(os.getenv('ALERT_COOLDOWN_SECONDS', 10.0))
 RELAY_PORT                = int(os.getenv('RELAY_PORT', 8765))
 NGROK_AUTHTOKEN           = os.getenv('NGROK_AUTHTOKEN', '')
 
+# Multi-tenant Claim Token & Device UID
+CLAIM_TOKEN               = os.getenv('CLAIM_TOKEN', '').strip()
+DEVICE_UID                = os.getenv('DEVICE_UID', 'ESP32_CAM_01').strip()
+
+if CLAIM_TOKEN:
+    SCOPED_TOPIC_DISCOVERY = f"users/{CLAIM_TOKEN}/cameras/+/discovery"
+    SCOPED_TOPIC_RELAY     = f"users/{CLAIM_TOKEN}/cameras/{DEVICE_UID}/relay_url"
+    SCOPED_TOPIC_ALERT     = f"users/{CLAIM_TOKEN}/alerts/person"
+else:
+    SCOPED_TOPIC_DISCOVERY = None
+    SCOPED_TOPIC_RELAY     = None
+    SCOPED_TOPIC_ALERT     = None
+
 # ---------------------------------------------------------------------------
 # Shared State (thread-safe via a lock)
 # ---------------------------------------------------------------------------
@@ -95,19 +108,24 @@ def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
     logger.info(f"Connected to HiveMQ Cloud at {MQTT_BROKER_HOST}:{MQTT_PORT}")
     client.subscribe(TOPIC_CAMERA_DISCOVERY)
     logger.info(f"Subscribed to camera discovery topic: {TOPIC_CAMERA_DISCOVERY}")
+    if SCOPED_TOPIC_DISCOVERY:
+        client.subscribe(SCOPED_TOPIC_DISCOVERY)
+        logger.info(f"Subscribed to scoped discovery topic: {SCOPED_TOPIC_DISCOVERY}")
 
 
 def on_mqtt_message(client, userdata, msg):
-    if msg.topic == TOPIC_CAMERA_DISCOVERY:
+    if msg.topic == TOPIC_CAMERA_DISCOVERY or msg.topic.endswith('/discovery'):
         try:
             payload = json.loads(msg.payload.decode('utf-8'))
             ip      = payload.get('ip')
             port    = payload.get('port', 81)
             path    = payload.get('stream_path', '/stream')
-            if ip:
+            node_id = payload.get('node_id', '')
+            # If scoped to a specific device, only match that device if specified
+            if ip and (not DEVICE_UID or not node_id or node_id == DEVICE_UID or node_id == 'cam_front_door'):
                 new_url = f"http://{ip}:{port}{path}"
                 if new_url != get_stream_url():
-                    logger.info(f"Camera discovery -> updated relay source: {new_url}")
+                    logger.info(f"Camera discovery ({node_id}) -> updated relay source: {new_url}")
                     set_stream_url(new_url)
         except Exception as err:
             logger.error(f"Error parsing camera discovery message: {err}")
@@ -229,9 +247,13 @@ def start_ngrok_tunnel(mqtt_client):
         logger.info(f"[ngrok] Tunnel open -> {relay_url}")
 
         # Publish retained so dashboard gets it immediately on connect
-        payload = json.dumps({"url": relay_url, "source": "ngrok"})
+        payload = json.dumps({"url": relay_url, "source": "ngrok", "device_uid": DEVICE_UID})
         mqtt_client.publish(TOPIC_CAMERA_RELAY, payload, qos=1, retain=True)
         logger.info(f"[MQTT] Published relay URL to {TOPIC_CAMERA_RELAY}")
+
+        if SCOPED_TOPIC_RELAY:
+            mqtt_client.publish(SCOPED_TOPIC_RELAY, payload, qos=1, retain=True)
+            logger.info(f"[MQTT] Published scoped relay URL to {SCOPED_TOPIC_RELAY}")
 
         return relay_url
 
@@ -347,13 +369,16 @@ def main():
                 orig_box    = [int(c / scale) for c in best_box]
 
                 alert_payload = {
-                    "camera":     "cam_front_door",
+                    "camera":     DEVICE_UID,
                     "confidence": round(float(best_weight), 2),
                     "timestamp":  datetime.utcnow().isoformat() + "Z",
                     "bbox":       orig_box,
                 }
-                mqtt_client.publish(TOPIC_PERSON_ALERT, json.dumps(alert_payload), qos=0)
-                logger.info(f"[Detection] ALERT: Person detected! Confidence: {best_weight:.2f}")
+                alert_json = json.dumps(alert_payload)
+                mqtt_client.publish(TOPIC_PERSON_ALERT, alert_json, qos=0)
+                if SCOPED_TOPIC_ALERT:
+                    mqtt_client.publish(SCOPED_TOPIC_ALERT, alert_json, qos=0)
+                logger.info(f"[Detection] ALERT: Person detected on {DEVICE_UID}! Confidence: {best_weight:.2f}")
                 last_alert_time = now
 
             time.sleep(0.01)
