@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert, History, CreditCard, Hash, Terminal } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 
 export interface AccessEntry {
   id: string;
@@ -12,18 +13,54 @@ export interface AccessEntry {
   timestamp: string;
 }
 
-export const AccessLog: React.FC = () => {
+interface AccessLogProps {
+  claimToken?: string;
+  userId?: string;
+}
+
+export const AccessLog: React.FC<AccessLogProps> = ({ claimToken, userId }) => {
   const [logs, setLogs] = useState<AccessEntry[]>([]);
+
+  // Load past logs from Supabase on mount
+  useEffect(() => {
+    const loadPastLogs = async () => {
+      if (!isSupabaseConfigured() || !userId) return;
+      try {
+        const { data, error } = await supabase
+          .from('access_logs')
+          .select('*')
+          .eq('user_id', userId)
+          .order('timestamp', { ascending: false })
+          .limit(25);
+        if (data && !error && data.length > 0) {
+          const formatted: AccessEntry[] = data.map((d) => ({
+            id: d.id,
+            method: (d.user_name?.includes('PIN') ? 'PIN' : d.user_name?.includes('Dashboard') ? 'REMOTE' : 'RFID'),
+            status: d.granted ? 'GRANTED' : 'DENIED',
+            identifier: d.rfid_tag || 'Keycard',
+            timestamp: new Date(d.timestamp).toLocaleTimeString(),
+          }));
+          setLogs(formatted);
+        }
+      } catch (err) {
+        console.error('Failed to load past access logs from Supabase:', err);
+      }
+    };
+    loadPastLogs();
+  }, [userId]);
 
   useEffect(() => {
     const client = getMqttClient();
 
     const onConnect = () => {
       client.subscribe('security/door/access_log');
+      if (claimToken) {
+        client.subscribe(`users/${claimToken}/doors/+/access_log`);
+      }
     };
 
-    const onMessage = (topic: string, message: Buffer) => {
-      if (topic === 'security/door/access_log') {
+    const onMessage = async (topic: string, message: Buffer) => {
+      if (topic === 'security/door/access_log' || topic.endsWith('/access_log')) {
         try {
           const payload = JSON.parse(message.toString());
           const newEntry: AccessEntry = {
@@ -34,6 +71,23 @@ export const AccessLog: React.FC = () => {
             timestamp: new Date().toLocaleTimeString(),
           };
           setLogs((prev) => [newEntry, ...prev.slice(0, 24)]);
+
+          // Persist to Supabase if authenticated
+          if (isSupabaseConfigured() && userId) {
+            await supabase.from('access_logs').insert([
+              {
+                user_id: userId,
+                rfid_tag: payload.identifier || 'Manual Input',
+                user_name:
+                  payload.method === 'PIN'
+                    ? 'PIN User'
+                    : payload.method === 'REMOTE'
+                    ? 'Dashboard Remote'
+                    : 'Keycard User',
+                granted: payload.status?.toUpperCase() === 'GRANTED',
+              },
+            ]);
+          }
         } catch (e) {
           console.error('[MQTT] Error parsing access log payload:', e);
         }
@@ -49,7 +103,7 @@ export const AccessLog: React.FC = () => {
     return () => {
       client.off('message', onMessage);
     };
-  }, []);
+  }, [claimToken, userId]);
 
   const renderMethodIcon = (method: string) => {
     switch (method) {

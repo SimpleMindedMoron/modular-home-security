@@ -63,12 +63,13 @@ When flashing the AI-Thinker ESP32-CAM, select:
    - If no Wi-Fi credentials are saved, it broadcasts a Wi-Fi Access Point: **`ESP32-Security-Setup`** (no password).
    - Connect your phone or laptop to this network. A captive portal page opens automatically.
    - Select your **Home Wi-Fi Network (SSID)** and enter the **Password**.
-   - In the **MQTT Broker IP (Command Center)** field, enter your central server's local IPv4 address (e.g., `192.168.1.100`).
-   - Click **Save**. The ESP32 will reboot and connect to your home Wi-Fi.
+   - Enter your **HiveMQ Cloud Host** (e.g. `xxxx.s1.eu.hivemq.cloud`), **MQTT Username**, and **MQTT Password**.
+   - Enter your **Account Claim Token** (copied from your Web Dashboard user profile menu) and **Device UID** (e.g. `ESP32_CAM_01`).
+   - Click **Save**. The ESP32 will reboot and connect to your home Wi-Fi and HiveMQ Cloud over TLS (port `8883`).
 
 2. **Persistent Storage (NVS via `Preferences`):**
-   - The custom MQTT Broker IP is saved in non-volatile flash memory under the `"camera"` namespace.
-   - On subsequent power cycles or reboots, the ESP32-CAM automatically reconnects to Wi-Fi and connects directly to the stored MQTT Broker without opening the portal.
+   - The HiveMQ Cloud broker host, credentials, claim token, and device UID are saved in non-volatile flash memory under the `"camera"` namespace.
+   - On subsequent power cycles or reboots, the ESP32-CAM automatically reconnects to Wi-Fi and connects directly to HiveMQ Cloud without opening the portal.
 
 ---
 
@@ -83,8 +84,9 @@ When flashing the AI-Thinker ESP32-CAM, select:
 ### 2. MQTT Telemetry Topics (Compliant with [docs/api-contract.md](../docs/api-contract.md))
 | Topic | Payload Format | Retain | Description |
 | :--- | :--- | :--- | :--- |
-| `security/camera/discovery` | `{"node_id":"cam_front_door","ip":"192.168.1.X","port":81,"stream_path":"/stream"}` | `true` | Dynamic IP and port announcement broadcast upon Wi-Fi + MQTT connection. |
-| `security/camera/status` | `"ONLINE"` or `"OFFLINE"` | `true` | Availability state. Configured with MQTT Last Will and Testament (LWT) for automatic `"OFFLINE"` detection on abrupt disconnection. |
+| `users/<claim_token>/cameras/<device_uid>/discovery`<br/>*(fallback: `security/camera/discovery`)* | `{"node_id":"...","ip":"192.168.1.X","port":81,"stream_path":"/stream"}` | `true` | Dynamic IP and port announcement broadcast upon Wi-Fi + MQTT connection. |
+| `users/<claim_token>/cameras/<device_uid>/status`<br/>*(fallback: `security/camera/status`)* | `"ONLINE"` or `"OFFLINE"` | `true` | Availability state. Configured with MQTT Last Will and Testament (LWT) for automatic `"OFFLINE"` detection on abrupt disconnection. |
+| `users/<claim_token>/cameras/<device_uid>/relay_url`<br/>*(fallback: `security/camera/relay_url`)* | `{"url":"https://...ngrok-free.app/stream"}` | `true` | Public HTTPS relay stream broadcast by the AI Processor service. |
 
 ---
 

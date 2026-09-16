@@ -3,8 +3,14 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, X, ShieldAlert } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 
-export const AlertBanner: React.FC = () => {
+interface AlertBannerProps {
+  claimToken?: string;
+  userId?: string;
+}
+
+export const AlertBanner: React.FC<AlertBannerProps> = ({ claimToken, userId }) => {
   const [alert, setAlert] = useState<{
     camera: string;
     confidence: number;
@@ -16,17 +22,35 @@ export const AlertBanner: React.FC = () => {
 
     const onConnect = () => {
       client.subscribe('security/alerts/person');
+      if (claimToken) {
+        client.subscribe(`users/${claimToken}/alerts/person`);
+      }
     };
 
-    const onMessage = (topic: string, message: Buffer) => {
-      if (topic === 'security/alerts/person') {
+    const onMessage = async (topic: string, message: Buffer) => {
+      if (topic === 'security/alerts/person' || topic.endsWith('/alerts/person')) {
         try {
           const payload = JSON.parse(message.toString());
+          const cameraName = payload.camera || 'Front Camera';
+          const conf = payload.confidence ? Math.round(payload.confidence * 100) : 95;
+          const time = payload.timestamp || new Date().toLocaleTimeString();
+
           setAlert({
-            camera: payload.camera || 'Front Camera',
-            confidence: payload.confidence ? Math.round(payload.confidence * 100) : 95,
-            timestamp: payload.timestamp || new Date().toLocaleTimeString(),
+            camera: cameraName,
+            confidence: conf,
+            timestamp: time,
           });
+
+          // Persist to Supabase if authenticated
+          if (isSupabaseConfigured() && userId) {
+            await supabase.from('alerts').insert([
+              {
+                user_id: userId,
+                alert_type: 'person_detected',
+                confidence: payload.confidence || 0.95,
+              },
+            ]);
+          }
 
           // Auto-dismiss alert after 12 seconds
           const timer = setTimeout(() => {
@@ -49,7 +73,7 @@ export const AlertBanner: React.FC = () => {
     return () => {
       client.off('message', onMessage);
     };
-  }, []);
+  }, [claimToken, userId]);
 
   if (!alert) return null;
 

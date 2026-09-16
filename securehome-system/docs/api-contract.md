@@ -10,32 +10,24 @@ This document defines the strict API contract for communication between all syst
 
 ## 🌐 Broker Network Settings
 
-- **TCP Port:** `1883` (Used by ESP32 microcontrollers and Python AI service)
-- **WebSockets Port:** `9001` (Used by Next.js browser client via MQTT.js)
-- **Default Base Topic:** `security/`
-
-Recommended Mosquitto configuration (`mosquitto.conf`):
-```conf
-listener 1883
-allow_anonymous true
-
-listener 9001
-protocol websockets
-allow_anonymous true
-```
+- **Primary Broker:** HiveMQ Cloud (TLS/TCP port `8883` for nodes & AI, WSS port `8884` for web dashboard)
+- **Local Fallback:** Eclipse Mosquitto (Ports `1883` TCP, `9001` WebSockets)
+- **Multi-Tenant Base Topic:** `users/<claim_token>/`
+- **Legacy Fallback Base Topic:** `security/`
 
 ---
 
-## 📋 Topic Catalog
+## 📋 Multi-Tenant Topic Catalog
 
-| Topic | Origin / Publisher | Consumer / Subscriber | Payload Format | Retain | QoS | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `security/door/command` | Web Dashboard | Access Node | String (`"OPEN"` / `"CLOSE"`) | No | 1 | Remote command to unlock or lock the door. |
-| `security/door/status` | Access Node | Web Dashboard | String (`"LOCKED"` / `"UNLOCKED"`) | Yes | 1 | Current state of the physical lock mechanism. |
-| `security/door/access_log` | Access Node | Web Dashboard | JSON Object | No | 1 | Audit log of NFC/Keypad entry attempts. |
-| `security/camera/discovery` | Vision Node | Web Dashboard, AI | JSON Object | Yes | 1 | Dynamic IP address announcement after Wi-Fi connection. |
-| `security/camera/status` | Vision Node | Web Dashboard, AI | String (`"ONLINE"` / `"OFFLINE"`) | Yes | 1 | Node availability status; uses MQTT Last Will & Testament (LWT). |
-| `security/alerts/person` | AI Processor | Web Dashboard | JSON Object | No | 0 | Alert triggered when computer vision detects a person. |
+| Scoped Topic | Legacy Fallback | Origin / Publisher | Consumer / Subscriber | Payload Format | Retain | QoS | Description |
+| :--- | :--- | :--- | :--- | :--- | :---: | :---: | :--- |
+| `users/<token>/doors/<uid>/command` | `security/door/command` | Web Dashboard | Access Node | String (`"OPEN"` / `"CLOSE"`) | No | 1 | Remote lock/unlock command. |
+| `users/<token>/doors/<uid>/status` | `security/door/status` | Access Node | Web Dashboard | String (`"LOCKED"` / `"UNLOCKED"`) | **Yes** | 1 | Physical lock state. |
+| `users/<token>/doors/<uid>/access_log` | `security/door/access_log` | Access Node | Web Dashboard | JSON Object | No | 1 | RFID/PIN authentication audit log. |
+| `users/<token>/cameras/<uid>/discovery` | `security/camera/discovery` | Vision Node | Web Dashboard, AI | JSON Object | **Yes** | 1 | Local stream IP/port discovery broadcast. |
+| `users/<token>/cameras/<uid>/status` | `security/camera/status` | Vision Node | Web Dashboard, AI | String (`"ONLINE"` / `"OFFLINE"`) | **Yes** | 1 | Availability status (LWT). |
+| `users/<token>/cameras/<uid>/relay_url` | `security/camera/relay_url` | AI Processor | Web Dashboard | JSON Object | **Yes** | 1 | Public HTTPS relay URL via ngrok. |
+| `users/<token>/alerts/person` | `security/alerts/person` | AI Processor | Web Dashboard | JSON Object | No | 0 | Real-time computer vision detection alert. |
 
 ---
 

@@ -70,6 +70,8 @@ Preferences preferences;
 char mqttBrokerHost[80] = "";
 char mqttUser[48] = "";
 char mqttPass[48] = "";
+char userClaimToken[64] = "";
+char deviceUid[32] = "ESP32_ACCESS_01";
 
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, KEYPAD_ROWS, KEYPAD_COLS);
@@ -85,6 +87,30 @@ unsigned long unlockStartedAt = 0;
 unsigned long lastMqttReconnectAttempt = 0;
 unsigned long lastWifiReconnectAttempt = 0;
 bool shouldSaveConfig = false;
+
+// =====================================================================
+// DYNAMIC SCOPED TOPICS (MULTI-TENANCY)
+// =====================================================================
+String getTopicCommand() {
+  if (strlen(userClaimToken) > 0) {
+    return "users/" + String(userClaimToken) + "/doors/" + String(deviceUid) + "/command";
+  }
+  return TOPIC_COMMAND;
+}
+
+String getTopicStatus() {
+  if (strlen(userClaimToken) > 0) {
+    return "users/" + String(userClaimToken) + "/doors/" + String(deviceUid) + "/status";
+  }
+  return TOPIC_STATUS;
+}
+
+String getTopicAccessLog() {
+  if (strlen(userClaimToken) > 0) {
+    return "users/" + String(userClaimToken) + "/doors/" + String(deviceUid) + "/access_log";
+  }
+  return TOPIC_ACCESS_LOG;
+}
 
 // =====================================================================
 // WIFI CONFIGURATION & NVS PERSISTENCE
@@ -103,17 +129,29 @@ void setupWiFiAndConfig() {
   savedUser.toCharArray(mqttUser, sizeof(mqttUser));
   String savedPass = preferences.getString("mqtt_pass", "");
   savedPass.toCharArray(mqttPass, sizeof(mqttPass));
+  String savedClaim = preferences.getString("claim_token", "");
+  if (savedClaim.length() > 0) {
+    savedClaim.toCharArray(userClaimToken, sizeof(userClaimToken));
+  }
+  String savedUid = preferences.getString("device_uid", "ESP32_ACCESS_01");
+  if (savedUid.length() > 0) {
+    savedUid.toCharArray(deviceUid, sizeof(deviceUid));
+  }
   preferences.end();
 
   WiFiManagerParameter customMqttServer("server", "MQTT Broker Host (e.g. xxxx.hivemq.cloud)", mqttBrokerHost, sizeof(mqttBrokerHost));
   WiFiManagerParameter customMqttUser("mqttuser", "MQTT Username", mqttUser, sizeof(mqttUser));
   WiFiManagerParameter customMqttPass("mqttpass", "MQTT Password", mqttPass, sizeof(mqttPass), "type='password'");
+  WiFiManagerParameter customClaimToken("claim", "Account Claim Token (from dashboard)", userClaimToken, sizeof(userClaimToken));
+  WiFiManagerParameter customDeviceUid("device_uid", "Device UID (e.g. ESP32_ACCESS_01)", deviceUid, sizeof(deviceUid));
 
   WiFiManager wm;
   wm.setSaveConfigCallback(saveConfigCallback);
   wm.addParameter(&customMqttServer);
   wm.addParameter(&customMqttUser);
   wm.addParameter(&customMqttPass);
+  wm.addParameter(&customClaimToken);
+  wm.addParameter(&customDeviceUid);
 
   Serial.println("\nStarting Access Node Wi-Fi provisioning...");
 
@@ -130,6 +168,7 @@ void setupWiFiAndConfig() {
     preferences.clear();
     preferences.end();
     mqttBrokerHost[0] = '\0';
+    userClaimToken[0] = '\0';
   }
 
   bool wifiReady = false;
@@ -156,12 +195,18 @@ void setupWiFiAndConfig() {
   mqttUser[sizeof(mqttUser) - 1] = '\0';
   strncpy(mqttPass, customMqttPass.getValue(), sizeof(mqttPass) - 1);
   mqttPass[sizeof(mqttPass) - 1] = '\0';
+  strncpy(userClaimToken, customClaimToken.getValue(), sizeof(userClaimToken) - 1);
+  userClaimToken[sizeof(userClaimToken) - 1] = '\0';
+  strncpy(deviceUid, customDeviceUid.getValue(), sizeof(deviceUid) - 1);
+  deviceUid[sizeof(deviceUid) - 1] = '\0';
 
   if (shouldSaveConfig || strlen(mqttBrokerHost) > 0) {
     preferences.begin("door-cfg", false);
     preferences.putString("mqtt_host", mqttBrokerHost);
     preferences.putString("mqtt_user", mqttUser);
     preferences.putString("mqtt_pass", mqttPass);
+    preferences.putString("claim_token", userClaimToken);
+    preferences.putString("device_uid", deviceUid);
     preferences.end();
     shouldSaveConfig = false;
   }
@@ -172,6 +217,12 @@ void setupWiFiAndConfig() {
   Serial.print("MQTT Broker Host: ");
   Serial.println(mqttBrokerHost);
   Serial.println(mqttUser[0] ? "MQTT Auth: credentials set" : "MQTT Auth: none configured");
+  if (strlen(userClaimToken) > 0) {
+    Serial.print("Claim Token: ");
+    Serial.println(userClaimToken);
+    Serial.print("Device UID: ");
+    Serial.println(deviceUid);
+  }
 }
 
 // =====================================================================
@@ -196,8 +247,12 @@ bool isAuthorizedPin(const String &pin) {
 // MQTT TELEMETRY & AUDIT LOGGING
 // =====================================================================
 void publishDoorStatus(bool unlocked) {
+  const char *payload = unlocked ? "UNLOCKED" : "LOCKED";
   // Retained = true per API contract so web dashboard immediately receives lock state
-  mqttClient.publish(TOPIC_STATUS, unlocked ? "UNLOCKED" : "LOCKED", true);
+  mqttClient.publish(TOPIC_STATUS, payload, true);
+  if (strlen(userClaimToken) > 0) {
+    mqttClient.publish(getTopicStatus().c_str(), payload, true);
+  }
 }
 
 void publishAccessLog(const char *method, bool granted, const char *identifier = "") {
@@ -212,6 +267,9 @@ void publishAccessLog(const char *method, bool granted, const char *identifier =
   char buffer[192];
   serializeJson(doc, buffer);
   mqttClient.publish(TOPIC_ACCESS_LOG, buffer);
+  if (strlen(userClaimToken) > 0) {
+    mqttClient.publish(getTopicAccessLog().c_str(), buffer);
+  }
 }
 
 // =====================================================================
@@ -243,8 +301,14 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   for (unsigned int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
+  message.trim();
 
-  if (String(topic) == TOPIC_COMMAND) {
+  bool isCmd = (String(topic) == TOPIC_COMMAND);
+  if (strlen(userClaimToken) > 0 && String(topic) == getTopicCommand()) {
+    isCmd = true;
+  }
+
+  if (isCmd) {
     if (message == "OPEN") {
       unlockDoor("REMOTE", "Dashboard Command"); // REMOTE enum per API Contract
     } else if (message == "CLOSE") {
@@ -266,6 +330,12 @@ bool reconnectMQTT() {
   if (connected) {
     Serial.println("MQTT connected to HiveMQ Cloud!");
     mqttClient.subscribe(TOPIC_COMMAND);
+    if (strlen(userClaimToken) > 0) {
+      String scopedCmd = getTopicCommand();
+      mqttClient.subscribe(scopedCmd.c_str());
+      Serial.print("Subscribed to scoped command topic: ");
+      Serial.println(scopedCmd);
+    }
     publishDoorStatus(doorUnlocked); // Announce current state (retained)
     return true;
   } else {

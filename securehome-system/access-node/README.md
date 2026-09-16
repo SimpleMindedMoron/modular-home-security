@@ -72,8 +72,9 @@ Install the following libraries via the **Arduino IDE Library Manager** (`Ctrl+S
 1. Power on the ESP32 Access Node.
 2. If Wi-Fi is unconfigured, it broadcasts an open network: **`ESP32-DoorLock-Setup`**.
 3. Connect your phone or laptop to the AP and open the captive portal.
-4. Select your **Home Wi-Fi SSID**, enter the **Password**, and specify your **MQTT Broker IP** (and optional username/password if authentication is enabled).
-5. Click **Save**. The ESP32 will store credentials in NVS (surviving power cycles) and auto-connect.
+4. Select your **Home Wi-Fi SSID**, enter the **Password**, and enter your **HiveMQ Cloud Host**, **MQTT Username**, and **MQTT Password**.
+5. Enter your **Account Claim Token** (copied from your Web Dashboard user profile menu) and your **Device UID** (e.g. `ESP32_ACCESS_01`).
+6. Click **Save**. The ESP32 stores all credentials and tokens in NVS (surviving power cycles) and auto-connects to HiveMQ Cloud over TLS (port `8883`).
 
 ---
 
@@ -88,6 +89,6 @@ Install the following libraries via the **Arduino IDE Library Manager** (`Ctrl+S
 
 | Topic | Direction | Payload | Retain | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `security/door/command` | Subscribe | `"OPEN"` or `"CLOSE"` | No | Remote commands from Command Center dashboard. |
-| `security/door/status` | Publish | `"LOCKED"` or `"UNLOCKED"` | **Yes** | Current deadbolt state (retained so dashboard immediately reflects state on load). |
-| `security/door/access_log` | Publish | `{"method":"RFID"\|"PIN"\|"REMOTE", "status":"GRANTED"\|"DENIED", "identifier":"..."}` | No | Real-time audit log streamed to Web Dashboard. |
+| `users/<claim_token>/doors/<device_uid>/command`<br/>*(fallback: `security/door/command`)* | Subscribe | `"OPEN"` or `"CLOSE"` | No | Remote commands from Command Center dashboard. |
+| `users/<claim_token>/doors/<device_uid>/status`<br/>*(fallback: `security/door/status`)* | Publish | `"LOCKED"` or `"UNLOCKED"` | **Yes** | Current deadbolt state (retained so dashboard immediately reflects state on load). |
+| `users/<claim_token>/doors/<device_uid>/access_log`<br/>*(fallback: `security/door/access_log`)* | Publish | `{"method":"RFID"\|"PIN"\|"REMOTE", "status":"GRANTED"\|"DENIED", "identifier":"..."}` | No | Real-time audit log streamed to Web Dashboard and Supabase. |

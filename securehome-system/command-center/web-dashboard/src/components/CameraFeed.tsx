@@ -14,14 +14,25 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
+  Trash2,
 } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
 interface CameraFeedProps {
   initialStreamUrl?: string;
+  deviceName?: string;
+  deviceId?: string;
+  topicPrefix?: string;
+  onDelete?: () => void;
 }
 
-export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
+export const CameraFeed: React.FC<CameraFeedProps> = ({
+  initialStreamUrl,
+  deviceName,
+  deviceId,
+  topicPrefix,
+  onDelete,
+}) => {
   const [streamUrl, setStreamUrl] = useState<string>(initialStreamUrl || '');
   const [relayUrl, setRelayUrl] = useState<string>('');
   const [streamSource, setStreamSource] = useState<'LOCAL' | 'RELAY' | 'MANUAL'>('LOCAL');
@@ -36,8 +47,10 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
 
   // Load saved stream URL from localStorage on mount
   useEffect(() => {
-    const savedRelay = localStorage.getItem('securehome_camera_relay_url');
-    const savedLocal = localStorage.getItem('securehome_camera_stream_url');
+    const storageKeyRelay = deviceId ? `securehome_${deviceId}_relay_url` : 'securehome_camera_relay_url';
+    const storageKeyLocal = deviceId ? `securehome_${deviceId}_stream_url` : 'securehome_camera_stream_url';
+    const savedRelay = localStorage.getItem(storageKeyRelay);
+    const savedLocal = localStorage.getItem(storageKeyLocal);
     if (savedRelay && !initialStreamUrl) {
       setRelayUrl(savedRelay);
       setStreamUrl(savedRelay);
@@ -50,22 +63,32 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
       setStreamSource('LOCAL');
       setStatus('ONLINE');
     }
-  }, [initialStreamUrl]);
+  }, [initialStreamUrl, deviceId]);
 
   // MQTT auto-discovery, relay URL & status telemetry
   useEffect(() => {
     const client = getMqttClient();
 
     const onConnect = () => {
-      client.subscribe('security/camera/discovery');
-      client.subscribe('security/camera/status');
-      client.subscribe('security/camera/relay_url');
+      const topics = [
+        'security/camera/discovery',
+        'security/camera/status',
+        'security/camera/relay_url',
+      ];
+      if (topicPrefix) {
+        topics.push(
+          `${topicPrefix}/discovery`,
+          `${topicPrefix}/status`,
+          `${topicPrefix}/relay_url`
+        );
+      }
+      topics.forEach((t) => client.subscribe(t));
     };
 
     const onMessage = (topic: string, message: Buffer) => {
       const msgStr = message.toString();
 
-      if (topic === 'security/camera/relay_url') {
+      if (topic.endsWith('/camera/relay_url')) {
         try {
           const data = JSON.parse(msgStr);
           if (data.url) {
@@ -73,7 +96,8 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
             setStreamUrl(data.url);
             setInputUrl(data.url);
             setStreamSource('RELAY');
-            localStorage.setItem('securehome_camera_relay_url', data.url);
+            const storageKey = deviceId ? `securehome_${deviceId}_relay_url` : 'securehome_camera_relay_url';
+            localStorage.setItem(storageKey, data.url);
             setStatus('ONLINE');
             setRetryCount(0);
             setStreamKey(Date.now());
@@ -84,7 +108,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
         }
       }
 
-      if (topic === 'security/camera/discovery') {
+      if (topic.endsWith('/camera/discovery')) {
         try {
           const data = JSON.parse(msgStr);
           if (data.ip) {
@@ -101,7 +125,8 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
               setStreamKey(Date.now());
               setLastUpdated(new Date().toLocaleTimeString());
             }
-            localStorage.setItem('securehome_camera_stream_url', url);
+            const storageKey = deviceId ? `securehome_${deviceId}_stream_url` : 'securehome_camera_stream_url';
+            localStorage.setItem(storageKey, url);
           }
         } catch {
           const url = msgStr.startsWith('http') ? msgStr : `http://${msgStr}/stream`;
@@ -113,11 +138,12 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
             setRetryCount(0);
             setLastUpdated(new Date().toLocaleTimeString());
           }
-          localStorage.setItem('securehome_camera_stream_url', url);
+          const storageKey = deviceId ? `securehome_${deviceId}_stream_url` : 'securehome_camera_stream_url';
+          localStorage.setItem(storageKey, url);
         }
       }
 
-      if (topic === 'security/camera/status') {
+      if (topic.endsWith('/camera/status')) {
         const isOnline = msgStr.toUpperCase() === 'ONLINE';
         if (isOnline) {
           setStatus('ONLINE');
@@ -137,7 +163,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
     return () => {
       client.off('message', onMessage);
     };
-  }, [relayUrl]);
+  }, [relayUrl, topicPrefix, deviceId]);
 
   // Format and save manual URL/IP input
   const handleApplyManualUrl = (e: React.FormEvent) => {
@@ -214,8 +240,8 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
             <Camera size={16} />
           </div>
           <div>
-            <h3>Video Surveillance</h3>
-            <span className="card-subtitle">Node 02 &bull; Front Entrance</span>
+            <h3>{deviceName || 'Video Surveillance'}</h3>
+            <span className="card-subtitle">{deviceId || 'ESP32-CAM'} &bull; Vision Node</span>
           </div>
         </div>
 
@@ -248,6 +274,18 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
           >
             <Settings size={15} />
           </button>
+
+          {onDelete && (
+            <button
+              type="button"
+              className="btn-icon btn-delete"
+              onClick={onDelete}
+              title="Remove Camera"
+              aria-label="Remove Camera"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -276,6 +314,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({ initialStreamUrl }) => {
       <div className="video-container" ref={containerRef}>
         {(status === 'ONLINE' || status === 'RECONNECTING') && streamUrl ? (
           <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               key={streamKey}
               src={`${streamUrl}${streamUrl.includes('?') ? '&' : '?'}_t=${streamKey}`}

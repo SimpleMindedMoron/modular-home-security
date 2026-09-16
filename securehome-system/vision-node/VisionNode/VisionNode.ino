@@ -33,7 +33,7 @@
 // NETWORK & MQTT CONFIGURATION
 // =====================================================
 
-#define MQTT_PORT 1883
+#define MQTT_PORT 8883
 #define CAMERA_HTTP_PORT 81
 
 const char *AP_NAME = "ESP32-Security-Setup";
@@ -54,6 +54,8 @@ Preferences preferences;
 char mqttBrokerHost[80] = "";
 char mqttUser[48] = "";
 char mqttPass[48] = "";
+char userClaimToken[64] = "";
+char deviceUid[32] = "ESP32_CAM_01";
 httpd_handle_t cameraServer = NULL;
 unsigned long lastMqttReconnectAttempt = 0;
 
@@ -69,14 +71,20 @@ void loadSettings() {
   user.toCharArray(mqttUser, sizeof(mqttUser));
   String pass = preferences.getString("mqtt_pass", "");
   pass.toCharArray(mqttPass, sizeof(mqttPass));
+  String claim = preferences.getString("claim_token", "");
+  claim.toCharArray(userClaimToken, sizeof(userClaimToken));
+  String uid = preferences.getString("device_uid", "ESP32_CAM_01");
+  uid.toCharArray(deviceUid, sizeof(deviceUid));
   preferences.end();
 }
 
-void saveSettings(const char *host, const char *user, const char *pass) {
+void saveSettings(const char *host, const char *user, const char *pass, const char *claim, const char *uid) {
   preferences.begin("camera", false);
   preferences.putString("mqtt_host", host);
   preferences.putString("mqtt_user", user);
   preferences.putString("mqtt_pass", pass);
+  preferences.putString("claim_token", claim);
+  preferences.putString("device_uid", uid);
   preferences.end();
 }
 
@@ -249,14 +257,21 @@ void publishCameraDiscovery() {
   String ip = WiFi.localIP().toString();
 
   // Adheres strictly to docs/api-contract.md schema
-  String payload = "{\"node_id\":\"cam_front_door\","
-                   "\"ip\":\"" +
-                   ip +
-                   "\","
+  String payload = "{\"node_id\":\"" + String(deviceUid) + "\","
+                   "\"ip\":\"" + ip + "\","
                    "\"port\":81,"
                    "\"stream_path\":\"/stream\"}";
 
+  // Legacy fallback topic
   mqttClient.publish(MQTT_DISCOVERY_TOPIC, payload.c_str(), true);
+
+  // Scoped multi-tenant topic if claim token is set
+  if (strlen(userClaimToken) > 0) {
+    String scopedTopic = "users/" + String(userClaimToken) + "/cameras/" + String(deviceUid) + "/discovery";
+    mqttClient.publish(scopedTopic.c_str(), payload.c_str(), true);
+    Serial.print("Scoped camera discovery published: ");
+    Serial.println(scopedTopic);
+  }
 
   Serial.print("Camera discovery published: ");
   Serial.println(payload);
@@ -279,15 +294,23 @@ bool connectMQTT() {
   String clientID =
       "securehome-camera-" + String((uint32_t)ESP.getEfuseMac(), HEX);
 
+  // Dynamic LWT status topic based on user claim token
+  String statusTopic = MQTT_STATUS_TOPIC;
+  if (strlen(userClaimToken) > 0) {
+    statusTopic = "users/" + String(userClaimToken) + "/cameras/" + String(deviceUid) + "/status";
+  }
+
   // Last Will and Testament: if node disconnects abruptly, publish OFFLINE (retained)
-  // HiveMQ Cloud requires credentials
   bool connected = mqttClient.connect(
       clientID.c_str(), mqttUser, mqttPass,
-      MQTT_STATUS_TOPIC, 1, true, "OFFLINE");
+      statusTopic.c_str(), 1, true, "OFFLINE");
 
   if (connected) {
     Serial.println(" connected!");
-    mqttClient.publish(MQTT_STATUS_TOPIC, "ONLINE", true);
+    mqttClient.publish(statusTopic.c_str(), "ONLINE", true);
+    if (statusTopic != MQTT_STATUS_TOPIC) {
+      mqttClient.publish(MQTT_STATUS_TOPIC, "ONLINE", true);
+    }
     publishCameraDiscovery();
     return true;
   } else {
@@ -316,10 +339,18 @@ void setupWiFi() {
                                      mqttUser, sizeof(mqttUser));
   WiFiManagerParameter mqttPassParam("mqtt_pass", "MQTT Password",
                                      mqttPass, sizeof(mqttPass), "type='password'");
+  WiFiManagerParameter claimTokenParam("claim_token",
+                                       "Account Claim Token (from dashboard)",
+                                       userClaimToken, sizeof(userClaimToken));
+  WiFiManagerParameter deviceUidParam("device_uid",
+                                      "Device UID (e.g. ESP32_CAM_01)",
+                                      deviceUid, sizeof(deviceUid));
 
   wifiManager.addParameter(&mqttHostParam);
   wifiManager.addParameter(&mqttUserParam);
   wifiManager.addParameter(&mqttPassParam);
+  wifiManager.addParameter(&claimTokenParam);
+  wifiManager.addParameter(&deviceUidParam);
 
   Serial.println();
   Serial.println("Starting WiFi provisioning...");
@@ -346,7 +377,15 @@ void setupWiFi() {
     strncpy(mqttPass, mqttPassParam.getValue(), sizeof(mqttPass) - 1);
     mqttPass[sizeof(mqttPass) - 1] = '\0';
   }
-  saveSettings(mqttBrokerHost, mqttUser, mqttPass);
+  if (strlen(claimTokenParam.getValue()) > 0) {
+    strncpy(userClaimToken, claimTokenParam.getValue(), sizeof(userClaimToken) - 1);
+    userClaimToken[sizeof(userClaimToken) - 1] = '\0';
+  }
+  if (strlen(deviceUidParam.getValue()) > 0) {
+    strncpy(deviceUid, deviceUidParam.getValue(), sizeof(deviceUid) - 1);
+    deviceUid[sizeof(deviceUid) - 1] = '\0';
+  }
+  saveSettings(mqttBrokerHost, mqttUser, mqttPass, userClaimToken, deviceUid);
 
   Serial.println();
   Serial.println("Wi-Fi connected successfully!");
@@ -354,6 +393,10 @@ void setupWiFi() {
   Serial.println(WiFi.localIP());
   Serial.print("MQTT Broker Host: ");
   Serial.println(mqttBrokerHost);
+  if (strlen(userClaimToken) > 0) {
+    Serial.print("Claim Token: ");
+    Serial.println(userClaimToken);
+  }
 }
 
 // =====================================================
@@ -384,7 +427,7 @@ void setup() {
   startCameraServer();
 
   // 4. Configure MQTT Client — HiveMQ Cloud TLS on port 8883
-  mqttClient.setServer(mqttBrokerHost, 8883);
+  mqttClient.setServer(mqttBrokerHost, MQTT_PORT);
   mqttClient.setBufferSize(512);
 
   // 5. Initial connection to MQTT Broker
