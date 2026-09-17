@@ -47,7 +47,7 @@ graph TD
 4. Select your `modular-home-security` repository.
 5. In the configuration screen:
    * **Framework Preset**: Next.js (automatically detected)
-   * **Root Directory**: Click *Edit* and select `securehome-system/command-center/web-dashboard` (or leave default root with `vercel.json`).
+   * **Root Directory**: Click **Edit** and select `securehome-system/command-center/web-dashboard` (required for monorepo structure).
 6. Expand **Environment Variables** and add the following 5 variables:
 
 | Key | Value | Description |
