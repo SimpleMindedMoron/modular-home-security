@@ -196,7 +196,7 @@ HTML_VIEWER_PAGE = """<!DOCTYPE html>
 # ---------------------------------------------------------------------------
 # MJPEG Relay HTTP Server
 # ---------------------------------------------------------------------------
-MJPEG_BOUNDARY = b"--mjpegframe"
+MJPEG_BOUNDARY = b"frame"
 
 
 class MJPEGRelayHandler(BaseHTTPRequestHandler):
@@ -246,8 +246,7 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
         # 3. Live multipart MJPEG stream (matches /stream or /stream?...)
         if clean_path == '/stream':
             self.send_response(200)
-            self.send_header('Content-Type',
-                             f'multipart/x-mixed-replace; boundary={MJPEG_BOUNDARY.decode()}')
+            self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Pragma', 'no-cache')
@@ -269,7 +268,7 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
 
                     try:
                         self.wfile.write(
-                            MJPEG_BOUNDARY + b"\r\n"
+                            b"--frame\r\n"
                             b"Content-Type: image/jpeg\r\n" +
                             f"Content-Length: {len(data)}\r\n\r\n".encode() +
                             data + b"\r\n"

@@ -207,6 +207,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   // Reconnection and cache-busting refresh
   const triggerRefresh = () => {
     if (!streamUrl) return;
+    setRetryCount(0);
     setStatus('RECONNECTING');
     setStreamKey(Date.now());
     setTimeout(() => {
