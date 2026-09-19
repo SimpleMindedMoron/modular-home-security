@@ -45,6 +45,17 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   const [streamKey, setStreamKey] = useState<number>(Date.now());
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Use same-origin Edge proxy for ngrok streams to bypass cross-site cookie blocking in Brave/Safari
+  const effectiveStreamSrc = React.useMemo(() => {
+    if (!streamUrl) return '';
+    const separator = streamUrl.includes('?') ? '&' : '?';
+    const targetWithCache = `${streamUrl}${separator}_t=${streamKey}`;
+    if (streamUrl.includes('ngrok')) {
+      return `/api/stream?url=${encodeURIComponent(targetWithCache)}`;
+    }
+    return targetWithCache;
+  }, [streamUrl, streamKey]);
+
   // Load saved stream URL from localStorage on mount
   useEffect(() => {
     const storageKeyRelay = deviceId ? `securehome_${deviceId}_relay_url` : 'securehome_camera_relay_url';
@@ -317,7 +328,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               key={streamKey}
-              src={`${streamUrl}${streamUrl.includes('?') ? '&' : '?'}_t=${streamKey}`}
+              src={effectiveStreamSrc}
               alt="ESP32-CAM MJPEG Video Stream"
               className="video-feed"
               onLoad={() => {
