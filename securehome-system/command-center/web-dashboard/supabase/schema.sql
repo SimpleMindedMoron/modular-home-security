@@ -1,8 +1,18 @@
--- SecureHome Cloud: Multi-Tenant Database Schema for Supabase
--- Run this in your Supabase SQL Editor (https://supabase.com/dashboard/project/_/sql)
+-- ==============================================================================
+-- Clean Reset & Recreate: SecureHome Cloud Supabase Schema
+-- ==============================================================================
 
--- 1. PROFILES TABLE (Linked to Supabase Auth)
-CREATE TABLE IF NOT EXISTS public.profiles (
+-- 1. DROP EXISTING TABLES & TRIGGERS (CASCADE handles all policies & foreign keys)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user();
+
+DROP TABLE IF EXISTS public.alerts CASCADE;
+DROP TABLE IF EXISTS public.access_logs CASCADE;
+DROP TABLE IF EXISTS public.devices CASCADE;
+DROP TABLE IF EXISTS public.profiles CASCADE;
+
+-- 2. CREATE PROFILES TABLE (Linked to Supabase Auth)
+CREATE TABLE public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT NOT NULL,
     full_name TEXT,
@@ -10,7 +20,6 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Enable RLS
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view own profile"
@@ -21,7 +30,7 @@ CREATE POLICY "Users can update own profile"
     ON public.profiles FOR UPDATE
     USING (auth.uid() = id);
 
--- Trigger to auto-create profile on new user signup
+-- Auto-create profile trigger on signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -32,27 +41,24 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
-
--- 2. DEVICES TABLE (Cameras & Access Nodes / Door Locks)
-CREATE TABLE IF NOT EXISTS public.devices (
+-- 3. CREATE DEVICES TABLE (Cameras & Door Locks)
+CREATE TABLE public.devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     device_type TEXT NOT NULL CHECK (device_type IN ('camera', 'door_lock')),
-    device_uid TEXT NOT NULL, -- Hardware MAC or unique serial identifier
-    stream_url TEXT,          -- Dynamic relay or local stream URL
+    device_uid TEXT NOT NULL,
+    stream_url TEXT,
     status TEXT DEFAULT 'offline' CHECK (status IN ('online', 'offline', 'warning')),
     last_seen TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     UNIQUE(user_id, device_uid)
 );
 
--- Enable RLS
 ALTER TABLE public.devices ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view their own devices"
@@ -71,9 +77,8 @@ CREATE POLICY "Users can delete their own devices"
     ON public.devices FOR DELETE
     USING (auth.uid() = user_id);
 
-
--- 3. ACCESS LOGS TABLE (RFID and Door Events)
-CREATE TABLE IF NOT EXISTS public.access_logs (
+-- 4. CREATE ACCESS LOGS TABLE (RFID Events)
+CREATE TABLE public.access_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     device_id UUID REFERENCES public.devices(id) ON DELETE SET NULL,
@@ -83,7 +88,6 @@ CREATE TABLE IF NOT EXISTS public.access_logs (
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Enable RLS
 ALTER TABLE public.access_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view own access logs"
@@ -94,9 +98,8 @@ CREATE POLICY "Users can insert own access logs"
     ON public.access_logs FOR INSERT
     WITH CHECK (auth.uid() = user_id);
 
-
--- 4. ALERTS TABLE (Security & AI Person Detections)
-CREATE TABLE IF NOT EXISTS public.alerts (
+-- 5. CREATE ALERTS TABLE (Security & AI Person Detections)
+CREATE TABLE public.alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     device_id UUID REFERENCES public.devices(id) ON DELETE SET NULL,
@@ -106,7 +109,6 @@ CREATE TABLE IF NOT EXISTS public.alerts (
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Enable RLS
 ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view own alerts"
