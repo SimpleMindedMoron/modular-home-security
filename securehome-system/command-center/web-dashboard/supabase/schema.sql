@@ -118,3 +118,35 @@ CREATE POLICY "Users can view own alerts"
 CREATE POLICY "Users can insert own alerts"
     ON public.alerts FOR INSERT
     WITH CHECK (auth.uid() = user_id);
+
+-- 6. CREATE REGISTERED_CARDS TABLE (NFC / RFID Card Registry per Device)
+-- Mirror of the ESP32's NVS card registry, kept in sync via the dashboard.
+-- Primary source of truth is the ESP32 NVS; this is a cloud backup / display layer.
+CREATE TABLE public.registered_cards (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    device_uid TEXT NOT NULL,          -- Matches the ESP32's device_uid field
+    uid TEXT NOT NULL,                 -- RFID UID string e.g. "AA:BB:CC:DD"
+    label TEXT NOT NULL DEFAULT 'Unnamed Card',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(user_id, device_uid, uid)   -- One entry per card per device per user
+);
+
+ALTER TABLE public.registered_cards ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own registered cards"
+    ON public.registered_cards FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own registered cards"
+    ON public.registered_cards FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own registered cards"
+    ON public.registered_cards FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own registered cards"
+    ON public.registered_cards FOR DELETE
+    USING (auth.uid() = user_id);
+

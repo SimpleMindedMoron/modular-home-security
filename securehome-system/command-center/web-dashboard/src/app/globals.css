@@ -994,6 +994,263 @@ code, pre,
 }
 
 /* ==========================================================================
+   Card Registry (NFC / RFID Enrollment)
+   ========================================================================== */
+
+.card-registry {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  animation: slideDown var(--t-base) var(--ease-snap);
+}
+
+.registry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.registry-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.01em;
+}
+
+/* Registered card list */
+.registry-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.registry-card-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  transition: border-color var(--t-fast);
+  animation: logEntry var(--t-base) var(--ease-snap);
+}
+
+.registry-card-item:hover {
+  border-color: var(--border-strong);
+}
+
+.registry-card-info {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.registry-card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.registry-card-uid {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  margin-top: 0.05rem;
+}
+
+.registry-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+/* Inline edit row */
+.registry-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.registry-edit-input {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-xs);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  outline: none;
+}
+
+/* Register new card button */
+.btn-enroll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.5rem;
+  background: var(--accent-dim);
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: all var(--t-base) var(--ease-snap);
+}
+
+.btn-enroll:hover {
+  background: rgba(212, 168, 83, 0.2);
+  border-style: solid;
+}
+
+/* Enroll flow states */
+.enroll-state {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  font-size: 0.75rem;
+  animation: slideDown var(--t-base) var(--ease-snap);
+}
+
+.enroll-scanning {
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.enroll-scan-ring {
+  color: var(--accent);
+  animation: subtlePulse 1.5s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+}
+
+.enroll-label {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 0.73rem;
+}
+
+/* Confirm step */
+.enroll-confirm {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+}
+
+.enroll-uid-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.enroll-uid-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.enroll-uid-code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.enroll-label-input {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.enroll-label-input:focus {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.enroll-label-input::placeholder {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.enroll-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.btn-enroll-save {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--accent);
+  color: #0a0a0a;
+  border: none;
+  border-radius: var(--r-xs);
+  padding: 0.32rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: opacity var(--t-fast);
+}
+
+.btn-enroll-save:hover {
+  opacity: 0.88;
+}
+
+/* Success / error */
+.enroll-success {
+  border-color: var(--green-border);
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.enroll-error {
+  border-color: var(--red-border);
+  background: var(--red-dim);
+  color: var(--red);
+  flex-wrap: wrap;
+}
+
+.registry-empty-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 0.25rem 0.5rem;
+  line-height: 1.45;
+}
+
+/* ==========================================================================
    Access Log
    ========================================================================== */
 
