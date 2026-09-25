@@ -67,8 +67,8 @@ export default function LoginPage() {
       <div className="auth-card">
         {/* Brand Header */}
         <div className="auth-brand">
-          <div className="brand-icon-box">
-            <Shield size={26} />
+          <div className="auth-brand-icon">
+            <Shield size={20} />
           </div>
           <h1>SecureHome</h1>
           <p className="auth-subtitle">Cloud Command Center & Multi-Device Portal</p>

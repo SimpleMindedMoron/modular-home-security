@@ -1,16 +1,18 @@
 import type { Metadata } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import { Space_Grotesk, DM_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '../context/AuthContext';
 
-const inter = Inter({
+const spaceGrotesk = Space_Grotesk({
   subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700'],
   display: 'swap',
   variable: '--font-sans',
 });
 
-const jetbrainsMono = JetBrains_Mono({
+const dmMono = DM_Mono({
   subsets: ['latin'],
+  weight: ['300', '400', '500'],
   display: 'swap',
   variable: '--font-mono',
 });
@@ -26,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" className={`${spaceGrotesk.variable} ${dmMono.variable}`}>
       <body>
         <AuthProvider>{children}</AuthProvider>
       </body>
