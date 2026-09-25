@@ -51,6 +51,7 @@ TOPIC_CAMERA_DISCOVERY    = os.getenv('TOPIC_CAMERA_DISCOVERY', 'security/camera
 TOPIC_CAMERA_RELAY        = os.getenv('TOPIC_CAMERA_RELAY', 'security/camera/relay_url')
 TOPIC_PERSON_ALERT        = os.getenv('TOPIC_PERSON_ALERT', 'security/alerts/person')
 ALERT_COOLDOWN_SECONDS    = float(os.getenv('ALERT_COOLDOWN_SECONDS', 10.0))
+MIN_CONFIDENCE            = float(os.getenv('MIN_CONFIDENCE', 0.5))
 RELAY_PORT                = int(os.getenv('RELAY_PORT', 8765))
 NGROK_AUTHTOKEN           = os.getenv('NGROK_AUTHTOKEN', '')
 
@@ -412,7 +413,12 @@ def ai_detection_worker(mqtt_client):
     global last_alert_time
 
     logger.info("[Detection] AI person detection thread started.")
-    detector = init_person_detector()
+    try:
+        detector = init_person_detector()
+    except Exception as e:
+        logger.error(f"[Detection] Failed to initialize HOG detector: {e}")
+        logger.error("[Detection] Is opencv-python >= 4.x installed? Run: pip install 'opencv-python==4.10.0.84'")
+        return
 
     while running:
         # Grab the latest frame from memory
@@ -434,7 +440,15 @@ def ai_detection_worker(mqtt_client):
 
         now = time.time()
         if len(boxes) > 0 and (now - last_alert_time) > ALERT_COOLDOWN_SECONDS:
-            best_weight = max(weights) if len(weights) > 0 else 0.85
+            # weights is a 2D numpy array from detectMultiScale — flatten before max()
+            flat_weights = weights.flatten() if hasattr(weights, 'flatten') else weights
+            best_weight = float(flat_weights.max()) if len(flat_weights) > 0 else 0.85
+
+            # Skip low-confidence detections (applies MIN_CONFIDENCE from .env)
+            if best_weight < MIN_CONFIDENCE:
+                time.sleep(0.2)
+                continue
+
             best_box = boxes[0].tolist()
             orig_box = [int(c / scale) for c in best_box]
 
