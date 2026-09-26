@@ -20,11 +20,50 @@ import {
 import { getMqttClient } from '../lib/mqttClient';
 
 // =============================================================================
-// 🎯 AUTO-DELETE DURATION CONFIGURATION (FRONTEND DASHBOARD)
+// 🎯 AUTO-DELETE DURATION CONFIGURATION & PRESETS (FRONTEND DASHBOARD)
 // =============================================================================
-// 👉 CHANGE THIS NUMBER TO MODIFY AUTO-DELETE DURATION (in seconds)!
-// Example: 60 = 1 minute | 120 = 2 minutes | 300 = 5 minutes | 3600 = 1 hour
-export const VIDEO_RETENTION_SECONDS = 60; // ⏱️ Auto-delete video after 1 minute (60s)
+export interface RetentionOption {
+  label: string;
+  valueSeconds: number;
+}
+
+export const RETENTION_OPTIONS: RetentionOption[] = [
+  { label: '1 min (Testing)', valueSeconds: 60 },
+  { label: '30 days', valueSeconds: 30 * 24 * 60 * 60 }, // 2,592,000s
+  { label: '45 days', valueSeconds: 45 * 24 * 60 * 60 }, // 3,888,000s
+  { label: '60 days', valueSeconds: 60 * 24 * 60 * 60 }, // 5,184,000s
+];
+
+export const DEFAULT_RETENTION_SECONDS = 60; // Default: 1 minute
+
+export const formatRemainingTime = (seconds: number): string => {
+  if (seconds <= 0) return '0s';
+  if (seconds < 60) return `${seconds}s`;
+
+  const minutes = Math.floor(seconds / 60);
+  const remSec = seconds % 60;
+  if (minutes < 60) {
+    return remSec > 0 ? `${minutes}m ${remSec}s` : `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remMin = minutes % 60;
+  if (hours < 24) {
+    return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+};
+
+export const getRetentionLabel = (seconds: number): string => {
+  const match = RETENTION_OPTIONS.find((opt) => opt.valueSeconds === seconds);
+  if (match) return match.label;
+  if (seconds >= 86400) return `${Math.round(seconds / 86400)} days`;
+  if (seconds >= 60) return `${Math.round(seconds / 60)} mins`;
+  return `${seconds}s`;
+};
 
 export interface RecordedVideoItem {
   id: string;
@@ -58,6 +97,43 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [justDeletedId, setJustDeletedId] = useState<string | null>(null);
 
+  // User-selected retention duration (persisted in localStorage)
+  const [retentionSeconds, setRetentionSeconds] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('securehome_retention_duration');
+      if (saved && !isNaN(Number(saved))) {
+        return Number(saved);
+      }
+    }
+    return DEFAULT_RETENTION_SECONDS;
+  });
+
+  // Handle dropdown selection change
+  const handleRetentionChange = (newDurationSeconds: number) => {
+    setRetentionSeconds(newDurationSeconds);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('securehome_retention_duration', String(newDurationSeconds));
+    }
+
+    // Broadcast retention setting change via MQTT to backend
+    try {
+      const client = getMqttClient();
+      if (client && client.connected) {
+        const payload = JSON.stringify({
+          retention_seconds: newDurationSeconds,
+          device_uid: deviceId,
+          timestamp: new Date().toISOString(),
+        });
+        client.publish('security/camera/settings/retention', payload, { qos: 1, retain: true });
+        if (topicPrefix) {
+          client.publish(`${topicPrefix}/settings/retention`, payload, { qos: 1, retain: true });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to publish retention duration update:', err);
+    }
+  };
+
   // 1. Ticker for live auto-deletion countdown (runs every 1 second)
   useEffect(() => {
     const timer = setInterval(() => {
@@ -67,12 +143,12 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
       // =======================================================================
       // 👉 AUTO-DELETION FRONTEND PURGE LOGIC
       // Automatically removes any recording whose age has exceeded
-      // VIDEO_RETENTION_SECONDS (60 seconds / 1 minute).
+      // the currently selected retentionSeconds (e.g. 1 min, 30d, 45d, 60d).
       // =======================================================================
       setRecordings((prev) => {
         const remaining = prev.filter((item) => {
           const ageSeconds = (currentNow - item.createdAt) / 1000;
-          return ageSeconds < VIDEO_RETENTION_SECONDS;
+          return ageSeconds < retentionSeconds;
         });
 
         // If an item was purged and it's currently open in modal, close modal
@@ -88,15 +164,15 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [selectedVideo]);
+  }, [selectedVideo, retentionSeconds]);
 
   // 2. Fetch initial recordings from backend / AI processor API
   const fetchRecordings = useCallback(async () => {
     try {
       const targetRelay = relayUrl || (typeof window !== 'undefined' ? localStorage.getItem('securehome_camera_relay_url') : '');
       const url = targetRelay
-        ? `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&relay_url=${encodeURIComponent(targetRelay)}`
-        : `/api/recordings?device_uid=${encodeURIComponent(deviceId)}`;
+        ? `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&relay_url=${encodeURIComponent(targetRelay)}&retention_seconds=${retentionSeconds}`
+        : `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&retention_seconds=${retentionSeconds}`;
 
       const res = await fetch(url);
       if (!res.ok) return;
@@ -121,7 +197,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
           const map = new Map<string, RecordedVideoItem>();
           [...mapped, ...prev].forEach((item) => {
             const ageSec = (Date.now() - item.createdAt) / 1000;
-            if (ageSec < VIDEO_RETENTION_SECONDS) {
+            if (ageSec < retentionSeconds) {
               map.set(item.id, item);
             }
           });
@@ -131,7 +207,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
     } catch (err) {
       // Backend api optional in offline mode
     }
-  }, [deviceId, deviceName, relayUrl]);
+  }, [deviceId, deviceName, relayUrl, retentionSeconds]);
 
   useEffect(() => {
     fetchRecordings();
@@ -261,18 +337,40 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
             <h4>Detection Recordings</h4>
             <span className="recorded-videos-subtitle">
               Auto-saved clips on person detection &bull;{' '}
-              <strong className="retention-highlight">Auto-deletes in {VIDEO_RETENTION_SECONDS}s (1 min)</strong>
+              <strong className="retention-highlight">
+                Retention: {getRetentionLabel(retentionSeconds)}
+              </strong>
             </span>
           </div>
         </div>
 
         <div className="recorded-videos-controls">
+          {/* 🎯 Retention Duration Dropdown Selector */}
+          <div className="retention-dropdown-wrapper" title="Change how long recorded clips are kept before auto-deletion">
+            <label htmlFor={`retention-select-${deviceId}`} className="retention-select-label">
+              <Clock size={12} />
+              <span>Auto-Delete:</span>
+            </label>
+            <select
+              id={`retention-select-${deviceId}`}
+              value={retentionSeconds}
+              onChange={(e) => handleRetentionChange(Number(e.target.value))}
+              className="retention-select-input"
+            >
+              {RETENTION_OPTIONS.map((opt) => (
+                <option key={opt.valueSeconds} value={opt.valueSeconds}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <button
             type="button"
             className="btn-simulate-detect"
             onClick={handleSimulateDetection}
             disabled={isSimulating}
-            title="Simulate person detection and test 1-minute auto-delete countdown"
+            title="Simulate person detection and test auto-delete countdown"
           >
             <Sparkles size={12} className={isSimulating ? 'spin-icon' : ''} />
             <span>{isSimulating ? 'Capturing...' : 'Test Detection Clip'}</span>
@@ -294,12 +392,12 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
         <div className="recordings-grid">
           {recordings.map((clip) => {
             const ageSeconds = Math.floor((now - clip.createdAt) / 1000);
-            const remainingSeconds = Math.max(0, VIDEO_RETENTION_SECONDS - ageSeconds);
-            const progressPercent = Math.min(100, Math.max(0, (remainingSeconds / VIDEO_RETENTION_SECONDS) * 100));
+            const remainingSeconds = Math.max(0, retentionSeconds - ageSeconds);
+            const progressPercent = Math.min(100, Math.max(0, (remainingSeconds / retentionSeconds) * 100));
 
             // Color coding as retention expiration nears
-            const isUrgent = remainingSeconds <= 15;
-            const isWarning = remainingSeconds <= 30 && !isUrgent;
+            const isUrgent = remainingSeconds <= Math.min(15, retentionSeconds * 0.25);
+            const isWarning = remainingSeconds <= Math.min(30, retentionSeconds * 0.5) && !isUrgent;
 
             return (
               <div
@@ -362,9 +460,11 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                   <div className="recording-retention-timer">
                     <div className="retention-info-row">
                       <span className={`retention-countdown-text ${isUrgent ? 'text-urgent' : isWarning ? 'text-warning' : ''}`}>
-                        <Flame size={11} /> Auto-deletes in <strong>{remainingSeconds}s</strong>
+                        <Flame size={11} /> Auto-deletes in <strong>{formatRemainingTime(remainingSeconds)}</strong>
                       </span>
-                      <span className="retention-fraction">{remainingSeconds}/{VIDEO_RETENTION_SECONDS}s</span>
+                      <span className="retention-fraction">
+                        {formatRemainingTime(remainingSeconds)} / {getRetentionLabel(retentionSeconds)}
+                      </span>
                     </div>
                     {/* Live Progress Bar */}
                     <div className="retention-progress-track">
@@ -384,7 +484,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
           <Film size={24} className="no-rec-icon" />
           <p className="no-rec-text">No recorded video clips currently stored.</p>
           <span className="no-rec-hint">
-            When a person is detected by AI, a video clip will automatically appear here and auto-delete after 1 minute.
+            When a person is detected by AI, a video clip will automatically appear here and auto-delete after {getRetentionLabel(retentionSeconds)}.
           </span>
         </div>
       )}
@@ -462,9 +562,9 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                 <span>
                   Auto-deletes in{' '}
                   <strong>
-                    {Math.max(0, VIDEO_RETENTION_SECONDS - Math.floor((now - selectedVideo.createdAt) / 1000))}s
+                    {formatRemainingTime(Math.max(0, retentionSeconds - Math.floor((now - selectedVideo.createdAt) / 1000)))}
                   </strong>{' '}
-                  (1-minute retention rule)
+                  ({getRetentionLabel(retentionSeconds)} retention rule)
                 </span>
               </div>
 

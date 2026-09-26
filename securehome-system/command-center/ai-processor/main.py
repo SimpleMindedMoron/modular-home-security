@@ -141,12 +141,33 @@ def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
     logger.info(f"Connected to HiveMQ Cloud at {MQTT_BROKER_HOST}:{MQTT_PORT}")
     client.subscribe(TOPIC_CAMERA_DISCOVERY)
     logger.info(f"Subscribed to camera discovery topic: {TOPIC_CAMERA_DISCOVERY}")
+    client.subscribe("security/camera/settings/retention")
+    logger.info("Subscribed to retention settings topic: security/camera/settings/retention")
+
     if SCOPED_TOPIC_DISCOVERY:
         client.subscribe(SCOPED_TOPIC_DISCOVERY)
         logger.info(f"Subscribed to scoped discovery topic: {SCOPED_TOPIC_DISCOVERY}")
+        scoped_retention = f"users/{CLAIM_TOKEN}/cameras/{DEVICE_UID}/settings/retention"
+        client.subscribe(scoped_retention)
+        logger.info(f"Subscribed to scoped retention settings topic: {scoped_retention}")
 
 
 def on_mqtt_message(client, userdata, msg):
+    global RECORDING_RETENTION_SECONDS
+
+    # 1. Dynamic Video Retention Duration Setting Update
+    if msg.topic == 'security/camera/settings/retention' or msg.topic.endswith('/settings/retention'):
+        try:
+            payload = json.loads(msg.payload.decode('utf-8'))
+            new_ret = payload.get('retention_seconds')
+            if new_ret and int(new_ret) > 0:
+                RECORDING_RETENTION_SECONDS = int(new_ret)
+                logger.info(f"[Settings] ⏱️ Auto-delete video retention updated to {RECORDING_RETENTION_SECONDS} seconds via MQTT.")
+        except Exception as err:
+            logger.error(f"Error parsing retention settings update: {err}")
+        return
+
+    # 2. Camera Discovery
     if msg.topic == TOPIC_CAMERA_DISCOVERY or msg.topic.endswith('/discovery'):
         try:
             payload = json.loads(msg.payload.decode('utf-8'))
@@ -302,12 +323,24 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
         # 3. Recordings List API (/api/recordings)
         if clean_path == '/api/recordings':
             now = time.time()
+            query_retention = RECORDING_RETENTION_SECONDS
+            if '?' in self.path:
+                try:
+                    import urllib.parse
+                    query_components = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                    if 'retention_seconds' in query_components:
+                        val = int(query_components['retention_seconds'][0])
+                        if val > 0:
+                            query_retention = val
+                except Exception:
+                    pass
+
             recordings_list = []
             with recordings_lock:
                 for r_id, r in recordings_registry.items():
                     created_at = r.get('created_at', now)
                     age = now - created_at
-                    remaining = max(0, int(RECORDING_RETENTION_SECONDS - age))
+                    remaining = max(0, int(query_retention - age))
                     recordings_list.append({
                         "id": r_id,
                         "device_uid": DEVICE_UID,
@@ -320,12 +353,12 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
                         "confidence": r.get('confidence', 0.9),
                         "remaining_seconds": remaining,
                         "expires_in": remaining,
-                        "retention_seconds": RECORDING_RETENTION_SECONDS
+                        "retention_seconds": query_retention
                     })
 
             # Sort latest first
             recordings_list.sort(key=lambda x: x.get('remaining_seconds', 0), reverse=True)
-            res_data = json.dumps({"recordings": recordings_list, "retention_seconds": RECORDING_RETENTION_SECONDS}).encode('utf-8')
+            res_data = json.dumps({"recordings": recordings_list, "retention_seconds": query_retention}).encode('utf-8')
             self.send_response(200)
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')

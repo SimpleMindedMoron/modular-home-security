@@ -2296,7 +2296,60 @@ code, pre,
 .recorded-videos-controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+/* 🎯 Retention Dropdown Selector */
+.retention-dropdown-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--panel-bg-subtle);
+  border: 1px solid var(--panel-border);
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-xs);
+  transition: border-color 0.15s ease;
+}
+
+.retention-dropdown-wrapper:hover,
+.retention-dropdown-wrapper:focus-within {
+  border-color: rgba(244, 63, 94, 0.4);
+}
+
+.retention-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.retention-select-label svg {
+  color: #fb7185;
+}
+
+.retention-select-input {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  padding: 0.15rem 0.25rem;
+  border-radius: var(--radius-xs);
+  font-family: inherit;
+}
+
+.retention-select-input option {
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 0.75rem;
+  padding: 0.5rem;
 }
 
 .btn-simulate-detect {

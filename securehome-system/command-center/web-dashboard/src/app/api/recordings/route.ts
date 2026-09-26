@@ -27,13 +27,17 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const deviceUid = searchParams.get('device_uid');
   const aiProcessorUrl = searchParams.get('relay_url') || process.env.AI_PROCESSOR_URL || 'http://127.0.0.1:8765';
+  const customRetention = searchParams.get('retention_seconds');
+  const activeRetention = customRetention && !isNaN(Number(customRetention))
+    ? Number(customRetention)
+    : API_RECORDING_RETENTION_SECONDS;
 
   const now = Date.now();
 
-  // 1. Auto-clean expired items older than 60 seconds (1 minute)
+  // 1. Auto-clean expired items based on active retention duration
   memoryRecordings = memoryRecordings.filter((rec) => {
     const ageSeconds = (now - rec.created_at) / 1000;
-    return ageSeconds < API_RECORDING_RETENTION_SECONDS;
+    return ageSeconds < activeRetention;
   });
 
   // 2. Try proxying to AI processor if running locally or via relay
@@ -41,7 +45,7 @@ export async function GET(request: NextRequest) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 1200);
 
-    const res = await fetch(`${aiProcessorUrl}/api/recordings`, {
+    const res = await fetch(`${aiProcessorUrl}/api/recordings?retention_seconds=${activeRetention}`, {
       signal: controller.signal,
       cache: 'no-store',
     });
@@ -59,7 +63,7 @@ export async function GET(request: NextRequest) {
         }));
         return NextResponse.json({
           recordings: remoteList,
-          retention_seconds: API_RECORDING_RETENTION_SECONDS,
+          retention_seconds: activeRetention,
           source: 'ai_processor',
         });
       }
@@ -75,18 +79,18 @@ export async function GET(request: NextRequest) {
 
   const recordingsWithRemaining = list.map((rec) => {
     const ageSeconds = (now - rec.created_at) / 1000;
-    const remaining = Math.max(0, Math.ceil(API_RECORDING_RETENTION_SECONDS - ageSeconds));
+    const remaining = Math.max(0, Math.ceil(activeRetention - ageSeconds));
     return {
       ...rec,
       remaining_seconds: remaining,
       expires_in: remaining,
-      retention_seconds: API_RECORDING_RETENTION_SECONDS,
+      retention_seconds: activeRetention,
     };
   });
 
   return NextResponse.json({
     recordings: recordingsWithRemaining,
-    retention_seconds: API_RECORDING_RETENTION_SECONDS,
+    retention_seconds: activeRetention,
     source: 'dashboard_memory',
   });
 }
