@@ -14,6 +14,7 @@ interface AuthContextType {
   signUp: (email: string, pass: string, fullName?: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
   enterDemoMode: () => void;
+  deleteAccount: (password: string) => Promise<{ error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -26,6 +27,7 @@ const AuthContext = createContext<AuthContextType>({
   signUp: async () => ({}),
   signOut: async () => {},
   enterDemoMode: () => {},
+  deleteAccount: async () => ({}),
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -134,6 +136,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Delete Account — re-authenticates with password before deleting
+  // ---------------------------------------------------------------------------
+  const deleteAccount = async (password: string): Promise<{ error?: string }> => {
+    if (isDemo) {
+      // In demo mode: just clear local state and exit
+      setUser(null);
+      setSession(null);
+      setIsDemo(false);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('securehome_demo_mode');
+      }
+      return {};
+    }
+
+    if (!isSupabaseConfigured() || !user?.email) {
+      return { error: 'Not authenticated or Supabase not configured.' };
+    }
+
+    // Step 1: Re-authenticate with password to confirm identity
+    const { error: reAuthError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password,
+    });
+    if (reAuthError) {
+      return { error: 'Incorrect password. Account was NOT deleted.' };
+    }
+
+    // Step 2: Delete the user via Supabase Admin API (server-side Next.js route)
+    try {
+      const res = await fetch('/api/auth/delete-account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: body.error || 'Failed to delete account on server.' };
+      }
+    } catch {
+      return { error: 'Network error while deleting account.' };
+    }
+
+    // Step 3: Sign out locally
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+    if (typeof window !== 'undefined') {
+      localStorage.clear();
+    }
+    return {};
+  };
+
   const enterDemoMode = () => {
     setIsDemo(true);
     setUser({
@@ -163,6 +218,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signUp,
         signOut,
         enterDemoMode,
+        deleteAccount,
       }}
     >
       {children}

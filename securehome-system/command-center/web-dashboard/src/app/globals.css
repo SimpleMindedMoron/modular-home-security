@@ -3372,3 +3372,266 @@ code, pre,
   50% { opacity: 0; }
 }
 
+/* ==========================================================================
+   Delete Account — Dropdown Button & Confirmation Modal
+   ========================================================================== */
+
+/* Red "Delete Account" item in the profile dropdown */
+.dropdown-item.delete-account-btn {
+  color: #f87171;
+  border-top: 1px solid var(--border, #2a2a2a);
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+}
+
+.dropdown-item.delete-account-btn:hover {
+  background: rgba(244, 63, 94, 0.1);
+  color: #f43f5e;
+}
+
+/* ── Modal Backdrop ── */
+.delete-account-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: fade-in 0.15s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Modal Panel ── */
+.delete-account-modal {
+  background: var(--bg-surface, #111);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(244, 63, 94, 0.15);
+  animation: slide-up 0.2s cubic-bezier(0.34, 1.4, 0.64, 1);
+  overflow: hidden;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Header ── */
+.dam-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.1rem 1.2rem 0.9rem;
+  border-bottom: 1px solid rgba(244, 63, 94, 0.2);
+  background: rgba(244, 63, 94, 0.06);
+  position: relative;
+}
+
+.dam-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  color: #f43f5e;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.dam-title {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f87171;
+  letter-spacing: 0.01em;
+}
+
+.dam-subtitle {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #9a9080);
+}
+
+.dam-close-btn {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  background: none;
+  border: none;
+  color: var(--text-secondary, #9a9080);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+
+.dam-close-btn:hover {
+  color: var(--text-primary, #f0ece3);
+}
+
+/* ── Warning Box ── */
+.dam-warning-box {
+  margin: 1rem 1.2rem;
+  padding: 0.75rem 1rem;
+  background: rgba(244, 63, 94, 0.06);
+  border: 1px solid rgba(244, 63, 94, 0.2);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #9a9080);
+  line-height: 1.6;
+}
+
+.dam-warning-box p {
+  margin: 0 0 0.4rem;
+  color: var(--text-primary, #f0ece3);
+  font-weight: 600;
+}
+
+.dam-warning-box ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.dam-warning-box li {
+  margin-bottom: 0.2rem;
+}
+
+/* ── Form ── */
+.dam-form {
+  padding: 0 1.2rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.dam-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary, #9a9080);
+  cursor: pointer;
+}
+
+.dam-password-input {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-base, #0a0a0a);
+  border: 1px solid var(--border-strong, #3a3a3a);
+  border-radius: 7px;
+  color: var(--text-primary, #f0ece3);
+  font-size: 0.82rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.dam-password-input:focus {
+  border-color: #f43f5e;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.12);
+}
+
+.dam-password-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Error Message ── */
+.dam-error-msg {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: #f87171;
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+}
+
+/* ── Action Buttons ── */
+.dam-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}
+
+.dam-cancel-btn {
+  padding: 0.5rem 1rem;
+  background: var(--bg-raised, #181818);
+  border: 1px solid var(--border-strong, #3a3a3a);
+  border-radius: 7px;
+  color: var(--text-secondary, #9a9080);
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.dam-cancel-btn:hover:not(:disabled) {
+  color: var(--text-primary, #f0ece3);
+  border-color: var(--border-accent, #d4a853);
+}
+
+.dam-cancel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dam-confirm-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1.1rem;
+  background: #f43f5e;
+  border: 1px solid #f43f5e;
+  border-radius: 7px;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.dam-confirm-btn:hover:not(:disabled) {
+  background: #e11d48;
+  border-color: #e11d48;
+}
+
+.dam-confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Loading spinner inside confirm button */
+.dam-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: dam-spin 0.7s linear infinite;
+}
+
+@keyframes dam-spin {
+  to { transform: rotate(360deg); }
+}

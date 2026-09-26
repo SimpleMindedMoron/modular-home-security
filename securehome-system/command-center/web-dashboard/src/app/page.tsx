@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Shield,
@@ -15,6 +15,10 @@ import {
   Check,
   Cpu,
   Layers,
+  Trash2,
+  AlertTriangle,
+  Lock,
+  X,
 } from 'lucide-react';
 import CameraFeed from '../components/CameraFeed';
 import DoorLock from '../components/DoorLock';
@@ -33,7 +37,7 @@ import {
 
 export default function HomePage() {
   const router = useRouter();
-  const { user, signOut, isDemo, claimToken, isLoading: authLoading } = useAuth();
+  const { user, signOut, isDemo, claimToken, isLoading: authLoading, deleteAccount } = useAuth();
 
   const [currentTime, setCurrentTime] = useState<string>('');
   const [mqttConnected, setMqttConnected] = useState<boolean>(false);
@@ -41,6 +45,12 @@ export default function HomePage() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [showProfileMenu, setShowProfileMenu] = useState<boolean>(false);
   const [copiedToken, setCopiedToken] = useState<boolean>(false);
+
+  // Delete Account Modal state
+  const [deleteModal, setDeleteModal] = useState<'idle' | 'open' | 'loading' | 'error'>('idle');
+  const [deletePassword, setDeletePassword] = useState<string>('');
+  const [deleteError, setDeleteError] = useState<string>('');
+  const deletePasswordRef = useRef<HTMLInputElement>(null);
 
   // Clock updater
   useEffect(() => {
@@ -115,6 +125,33 @@ export default function HomePage() {
       navigator.clipboard.writeText(claimToken);
       setCopiedToken(true);
       setTimeout(() => setCopiedToken(false), 2000);
+    }
+  };
+
+  const openDeleteModal = () => {
+    setShowProfileMenu(false);
+    setDeletePassword('');
+    setDeleteError('');
+    setDeleteModal('open');
+    // Focus password input after render
+    setTimeout(() => deletePasswordRef.current?.focus(), 80);
+  };
+
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deletePassword.trim()) {
+      setDeleteError('Please enter your password to confirm.');
+      return;
+    }
+    setDeleteModal('loading');
+    setDeleteError('');
+    const result = await deleteAccount(deletePassword);
+    if (result.error) {
+      setDeleteModal('error');
+      setDeleteError(result.error);
+    } else {
+      // Deleted — redirect to login
+      router.push('/login');
     }
   };
 
@@ -225,6 +262,16 @@ export default function HomePage() {
                         <LogOut size={14} />
                         <span>{isDemo ? 'Exit Demo Mode' : 'Sign Out'}</span>
                       </button>
+                      {!isDemo && (
+                        <button
+                          type="button"
+                          className="dropdown-item delete-account-btn"
+                          onClick={openDeleteModal}
+                        >
+                          <Trash2 size={14} />
+                          <span>Delete Account</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -333,6 +380,103 @@ export default function HomePage() {
         onAddDevice={handleAddDevice}
         claimToken={claimToken}
       />
+
+      {/* ── Delete Account Confirmation Modal ── */}
+      {(deleteModal === 'open' || deleteModal === 'loading' || deleteModal === 'error') && (
+        <div className="delete-account-backdrop" onClick={() => deleteModal !== 'loading' && setDeleteModal('idle')}>
+          <div
+            className="delete-account-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+          >
+            {/* Modal Header */}
+            <div className="dam-header">
+              <div className="dam-icon-wrap">
+                <AlertTriangle size={18} />
+              </div>
+              <div>
+                <h3 id="delete-account-title" className="dam-title">Delete Account</h3>
+                <p className="dam-subtitle">This action is permanent and cannot be undone.</p>
+              </div>
+              {deleteModal !== 'loading' && (
+                <button
+                  type="button"
+                  className="dam-close-btn"
+                  onClick={() => setDeleteModal('idle')}
+                  aria-label="Close"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+
+            {/* Warning Box */}
+            <div className="dam-warning-box">
+              <p>Deleting your account will permanently remove:</p>
+              <ul>
+                <li>Your profile and authentication credentials</li>
+                <li>All paired cameras and door locks</li>
+                <li>All activity logs and recorded footage</li>
+              </ul>
+            </div>
+
+            {/* Password Confirmation Form */}
+            <form onSubmit={handleDeleteAccount} className="dam-form">
+              <label className="dam-label" htmlFor="delete-confirm-password">
+                <Lock size={12} />
+                <span>Confirm with your password</span>
+              </label>
+              <input
+                ref={deletePasswordRef}
+                id="delete-confirm-password"
+                type="password"
+                className="dam-password-input"
+                placeholder="Enter your current password"
+                value={deletePassword}
+                onChange={(e) => {
+                  setDeletePassword(e.target.value);
+                  if (deleteError) setDeleteError('');
+                }}
+                disabled={deleteModal === 'loading'}
+                autoComplete="current-password"
+              />
+
+              {/* Error message */}
+              {deleteError && (
+                <div className="dam-error-msg">
+                  <AlertTriangle size={12} />
+                  <span>{deleteError}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="dam-actions">
+                <button
+                  type="button"
+                  className="dam-cancel-btn"
+                  onClick={() => setDeleteModal('idle')}
+                  disabled={deleteModal === 'loading'}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="dam-confirm-btn"
+                  disabled={deleteModal === 'loading' || !deletePassword.trim()}
+                >
+                  {deleteModal === 'loading' ? (
+                    <><span className="dam-spinner" />Deleting...</>
+                  ) : (
+                    <><Trash2 size={13} />Delete My Account</>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
