@@ -21,6 +21,7 @@ import DoorLock from '../components/DoorLock';
 import AccessLog from '../components/AccessLog';
 import AlertBanner from '../components/AlertBanner';
 import AddDeviceModal from '../components/AddDeviceModal';
+import RecordedVideos from '../components/RecordedVideos';
 import { getMqttClient } from '../lib/mqttClient';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -281,6 +282,23 @@ export default function HomePage() {
                   <span>Pair Your First Camera</span>
                 </button>
               </div>
+            )}
+
+            {/* ── Detection Recordings Panel (below camera views) ── */}
+            {cameras.map((cam) => (
+              <RecordedVideos
+                key={`recordings-${cam.id}`}
+                deviceId={cam.device_uid}
+                deviceName={cam.name}
+                relayUrl={cam.stream_url ? cam.stream_url.replace('/stream', '') : ''}
+                topicPrefix={claimToken ? `users/${claimToken}/cameras/${cam.device_uid}` : undefined}
+              />
+            ))}
+            {cameras.length === 0 && (
+              <RecordedVideos
+                deviceId="ESP32_CAM_01"
+                deviceName="Front Entrance Camera"
+              />
             )}
           </div>
 

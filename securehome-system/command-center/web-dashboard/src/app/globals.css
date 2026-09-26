@@ -2879,3 +2879,496 @@ code, pre,
   color: #f43f5e;
   border-color: #f43f5e;
 }
+
+/* ==========================================================================
+   Detection Recordings Panel (RecordedVideos Component)
+   ========================================================================== */
+
+.recorded-videos-section {
+  margin-top: 1.25rem;
+  background: var(--bg-surface, #111);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* ── Section Header ── */
+.recorded-videos-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  background: var(--bg-raised, #181818);
+}
+
+.recorded-videos-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.recorded-videos-title h4 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary, #f0ece3);
+  letter-spacing: 0.02em;
+}
+
+.recorded-videos-subtitle {
+  font-size: 0.7rem;
+  color: var(--text-secondary, #9a9080);
+  margin-top: 0.15rem;
+  display: block;
+}
+
+.retention-highlight {
+  color: var(--accent, #d4a853);
+}
+
+/* Record pulse badge icon */
+.record-pulse-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(212, 168, 83, 0.12);
+  border: 1px solid rgba(212, 168, 83, 0.3);
+  color: var(--accent, #d4a853);
+  flex-shrink: 0;
+}
+
+/* ── Controls Row ── */
+.recorded-videos-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Retention Dropdown */
+.retention-dropdown-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg-base, #0a0a0a);
+  border: 1px solid var(--border-strong, #3a3a3a);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+}
+
+.retention-select-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  color: var(--text-secondary, #9a9080);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.retention-select-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary, #f0ece3);
+  font-size: 0.72rem;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.retention-select-input option {
+  background: #181818;
+  color: #f0ece3;
+}
+
+/* Simulate Detection Button */
+.btn-simulate-detect {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  background: rgba(212, 168, 83, 0.1);
+  border: 1px solid rgba(212, 168, 83, 0.35);
+  border-radius: 6px;
+  color: var(--accent, #d4a853);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.btn-simulate-detect:hover:not(:disabled) {
+  background: rgba(212, 168, 83, 0.2);
+  border-color: var(--accent, #d4a853);
+}
+
+.btn-simulate-detect:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Refresh Button */
+.btn-refresh-recordings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg-base, #0a0a0a);
+  border: 1px solid var(--border-strong, #3a3a3a);
+  border-radius: 6px;
+  color: var(--text-secondary, #9a9080);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.btn-refresh-recordings:hover {
+  color: var(--text-primary, #f0ece3);
+  border-color: var(--accent, #d4a853);
+}
+
+/* ── Recordings Grid ── */
+.recordings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+}
+
+/* ── Recording Card ── */
+.recording-card {
+  background: var(--bg-raised, #181818);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 7px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+
+.recording-card:hover {
+  border-color: var(--accent, #d4a853);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(212, 168, 83, 0.12);
+}
+
+.recording-card--urgent {
+  border-color: rgba(244, 63, 94, 0.5) !important;
+  animation: urgent-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes urgent-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.0); }
+  50%       { box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.2); }
+}
+
+/* ── Thumbnail Area ── */
+.recording-thumb-wrapper {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 */
+  background: #0a0a0a;
+  overflow: hidden;
+}
+
+.recording-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.recording-thumb-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: linear-gradient(135deg, #0d0d0d 0%, #1a1a1a 100%);
+}
+
+.thumb-ai-icon {
+  color: #f43f5e;
+  opacity: 0.75;
+}
+
+.thumb-ai-label {
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #f43f5e;
+  opacity: 0.65;
+}
+
+/* Play Overlay */
+.recording-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+  background: rgba(0,0,0,0.4);
+}
+
+.recording-card:hover .recording-play-overlay {
+  opacity: 1;
+}
+
+.play-circle-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(212, 168, 83, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+}
+
+/* Confidence / Duration Badges */
+.recording-badge-confidence,
+.recording-badge-duration {
+  position: absolute;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.recording-badge-confidence {
+  top: 6px;
+  left: 6px;
+  background: rgba(244, 63, 94, 0.85);
+  color: #fff;
+}
+
+.recording-badge-duration {
+  bottom: 6px;
+  right: 6px;
+  background: rgba(0,0,0,0.75);
+  color: #d4d4d4;
+}
+
+/* ── Card Body ── */
+.recording-card-body {
+  padding: 0.55rem 0.65rem;
+}
+
+.recording-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+
+.recording-timestamp {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.65rem;
+  color: var(--text-secondary, #9a9080);
+  font-family: 'DM Mono', monospace;
+}
+
+.recording-delete-btn {
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  cursor: pointer;
+  color: var(--text-secondary, #9a9080);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.recording-delete-btn:hover {
+  color: #f43f5e;
+  background: rgba(244, 63, 94, 0.1);
+}
+
+/* ── Auto-Deletion Countdown ── */
+.recording-retention-timer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.retention-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.retention-countdown-text {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  color: var(--text-secondary, #9a9080);
+}
+
+.retention-fraction {
+  font-size: 0.58rem;
+  color: var(--text-muted, #5a5248);
+  font-family: 'DM Mono', monospace;
+  white-space: nowrap;
+}
+
+.text-urgent { color: #f43f5e !important; }
+.text-warning { color: #f59e0b !important; }
+
+/* Progress Track */
+.retention-progress-track {
+  height: 3px;
+  background: var(--border, #2a2a2a);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.retention-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent, #d4a853);
+  transition: width 1s linear;
+}
+
+.fill-urgent  { background: #f43f5e; }
+.fill-warning { background: #f59e0b; }
+
+/* Spin animation for simulating icon */
+.spin-icon {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Empty State ── */
+.no-recordings-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2.5rem 1rem;
+  text-align: center;
+}
+
+.no-rec-icon {
+  color: var(--text-muted, #5a5248);
+  opacity: 0.6;
+}
+
+.no-rec-text {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #9a9080);
+}
+
+.no-rec-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted, #5a5248);
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+/* ── Simulated Video Canvas (demo mode) ── */
+.simulated-video-canvas {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  background: linear-gradient(180deg, #050a0f 0%, #0d1a25 100%);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.canvas-scanner-effect {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 4px,
+    rgba(0, 220, 130, 0.04) 4px,
+    rgba(0, 220, 130, 0.04) 5px
+  );
+  pointer-events: none;
+  animation: scanner-move 6s linear infinite;
+}
+
+@keyframes scanner-move {
+  0%   { background-position: 0 0; }
+  100% { background-position: 0 100px; }
+}
+
+.canvas-person-box {
+  position: absolute;
+  top: 28%;
+  left: 28%;
+  width: 44%;
+  height: 55%;
+}
+
+.box-corner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: #f43f5e;
+  border-style: solid;
+}
+.box-corner.tl { top: 0; left: 0;  border-width: 2px 0 0 2px; }
+.box-corner.tr { top: 0; right: 0; border-width: 2px 2px 0 0; }
+.box-corner.bl { bottom: 0; left: 0;  border-width: 0 0 2px 2px; }
+.box-corner.br { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+
+.box-tag {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #f43f5e;
+  font-family: 'DM Mono', monospace;
+}
+
+.canvas-hud-overlay {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.58rem;
+  color: rgba(0, 220, 130, 0.7);
+  font-family: 'DM Mono', monospace;
+  letter-spacing: 0.05em;
+}
+
+.hud-live-tag {
+  color: #f43f5e;
+  animation: blink 1.2s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
