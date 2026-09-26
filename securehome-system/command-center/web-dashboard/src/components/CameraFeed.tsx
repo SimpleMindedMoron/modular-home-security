@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
+import RecordedVideos from './RecordedVideos';
 
 interface CameraFeedProps {
   initialStreamUrl?: string;
@@ -466,6 +467,14 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
           </button>
         </div>
       </footer>
+
+      {/* Recorded Detection Videos Panel */}
+      <RecordedVideos
+        deviceId={deviceId}
+        deviceName={deviceName}
+        relayUrl={relayUrl || streamUrl}
+        topicPrefix={topicPrefix}
+      />
     </section>
   );
 };

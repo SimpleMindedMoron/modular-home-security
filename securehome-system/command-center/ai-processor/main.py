@@ -59,6 +59,23 @@ NGROK_AUTHTOKEN           = os.getenv('NGROK_AUTHTOKEN', '')
 CLAIM_TOKEN               = os.getenv('CLAIM_TOKEN', '').strip()
 DEVICE_UID                = os.getenv('DEVICE_UID', 'ESP32_CAM_01').strip()
 
+# ===========================================================================
+# 🎯 VIDEO RECORDING & AUTO-DELETION CONFIGURATION
+# ===========================================================================
+# 1. RECORDING_RETENTION_SECONDS: Time in seconds before recorded detection
+#    videos are automatically deleted from storage.
+#    👉 CHANGE THIS NUMBER TO INCREASE OR DECREASE RETENTION DURATION!
+#    Example: 60 = 1 minute | 300 = 5 minutes | 3600 = 1 hour
+RECORDING_RETENTION_SECONDS = int(os.getenv('RECORDING_RETENTION_SECONDS', 60))
+
+# 2. RECORDING_DURATION_SECONDS: Duration of each video clip captured upon detection.
+RECORDING_DURATION_SECONDS  = int(os.getenv('RECORDING_DURATION_SECONDS', 10))
+
+# Directory paths for saving video clips and preview thumbnails
+RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recordings')
+THUMBNAILS_DIR = os.path.join(RECORDINGS_DIR, 'thumbnails')
+os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+
 if CLAIM_TOKEN:
     SCOPED_TOPIC_DISCOVERY = f"users/{CLAIM_TOKEN}/cameras/+/discovery"
     SCOPED_TOPIC_RELAY     = f"users/{CLAIM_TOKEN}/cameras/{DEVICE_UID}/relay_url"
@@ -80,6 +97,17 @@ latest_frame_bytes = None
 latest_cv_frame    = None
 frame_lock         = threading.Lock()
 frame_cond         = threading.Condition(frame_lock)
+
+# Ring buffer of recent frames (pre-roll buffer before detection)
+from collections import deque
+frame_history      = deque(maxlen=30)
+history_lock       = threading.Lock()
+
+# Registry of active video recordings
+# format: { rec_id: { 'id': str, 'filename': str, 'video_path': str, 'thumbnail_path': str, 'created_at': float, 'duration': int, 'confidence': float, 'bbox': list } }
+recordings_registry = {}
+recordings_lock     = threading.Lock()
+is_recording_active = False
 
 
 def get_stream_url():
@@ -204,12 +232,39 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
     """
     Serves the ESP32-CAM MJPEG stream at /stream by forwarding in-memory
     JPEG frames captured by the dedicated camera capture thread.
-    Prevents opening multiple connections to the ESP32-CAM.
+    Also serves recorded detection videos (/recordings/...) and metadata API (/api/recordings).
     """
 
     def log_message(self, format, *args):
         # Suppress per-request access logs to keep terminal clean
         pass
+
+    def send_cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range')
+        self.send_header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_cors_headers()
+        self.end_headers()
+
+    def do_DELETE(self):
+        clean_path = self.path.split('?')[0].rstrip('/')
+        if clean_path.startswith('/api/recordings/'):
+            rec_id = clean_path.replace('/api/recordings/', '').strip()
+            deleted = delete_recording_by_id(rec_id)
+            if deleted:
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "deleted", "id": rec_id}).encode('utf-8'))
+            else:
+                self.send_error(404, "Recording not found")
+            return
+        self.send_error(404)
 
     def do_GET(self):
         # Extract clean path without query parameters (e.g. /stream?_t=123 -> /stream)
@@ -238,18 +293,104 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'image/jpeg')
             self.send_header('Content-Length', str(len(data)))
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_cors_headers()
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(data)
             return
 
-        # 3. Live multipart MJPEG stream (matches /stream or /stream?...)
+        # 3. Recordings List API (/api/recordings)
+        if clean_path == '/api/recordings':
+            now = time.time()
+            recordings_list = []
+            with recordings_lock:
+                for r_id, r in recordings_registry.items():
+                    created_at = r.get('created_at', now)
+                    age = now - created_at
+                    remaining = max(0, int(RECORDING_RETENTION_SECONDS - age))
+                    recordings_list.append({
+                        "id": r_id,
+                        "device_uid": DEVICE_UID,
+                        "filename": r.get('filename'),
+                        "video_url": f"/recordings/{r.get('filename')}",
+                        "thumbnail_url": f"/recordings/thumbnails/{r_id}.jpg",
+                        "created_at": r.get('timestamp_iso'),
+                        "timestamp": r.get('timestamp_iso'),
+                        "duration": r.get('duration', RECORDING_DURATION_SECONDS),
+                        "confidence": r.get('confidence', 0.9),
+                        "remaining_seconds": remaining,
+                        "expires_in": remaining,
+                        "retention_seconds": RECORDING_RETENTION_SECONDS
+                    })
+
+            # Sort latest first
+            recordings_list.sort(key=lambda x: x.get('remaining_seconds', 0), reverse=True)
+            res_data = json.dumps({"recordings": recordings_list, "retention_seconds": RECORDING_RETENTION_SECONDS}).encode('utf-8')
+            self.send_response(200)
+            self.send_cors_headers()
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(res_data)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(res_data)
+            return
+
+        # 4. Serve Video Thumbnail (/recordings/thumbnails/<filename>)
+        if clean_path.startswith('/recordings/thumbnails/'):
+            filename = os.path.basename(clean_path)
+            file_path = os.path.join(THUMBNAILS_DIR, filename)
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'rb') as f:
+                        data = f.read()
+                    self.send_response(200)
+                    self.send_cors_headers()
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'public, max-age=60')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception as err:
+                    logger.error(f"Error serving thumbnail {filename}: {err}")
+                    self.send_error(500)
+                    return
+            else:
+                self.send_error(404, "Thumbnail not found")
+                return
+
+        # 5. Serve Video File (/recordings/<filename>)
+        if clean_path.startswith('/recordings/'):
+            filename = os.path.basename(clean_path)
+            file_path = os.path.join(RECORDINGS_DIR, filename)
+            if os.path.exists(file_path):
+                try:
+                    file_size = os.path.getsize(file_path)
+                    with open(file_path, 'rb') as f:
+                        data = f.read()
+                    self.send_response(200)
+                    self.send_cors_headers()
+                    self.send_header('Content-Type', 'video/mp4')
+                    self.send_header('Content-Length', str(file_size))
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception as err:
+                    logger.error(f"Error serving video {filename}: {err}")
+                    self.send_error(500)
+                    return
+            else:
+                self.send_error(404, "Video clip not found")
+                return
+
+        # 6. Live multipart MJPEG stream (matches /stream or /stream?...)
         if clean_path == '/stream':
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_cors_headers()
             self.send_header('Pragma', 'no-cache')
             self.send_header('Expires', '0')
             self.end_headers()
@@ -300,6 +441,197 @@ def start_relay_server():
 
 
 # ---------------------------------------------------------------------------
+# Video Recording & Storage Functions
+# ---------------------------------------------------------------------------
+def delete_recording_by_id(rec_id: str) -> bool:
+    """Manually deletes a recording by its ID."""
+    with recordings_lock:
+        rec = recordings_registry.pop(rec_id, None)
+    if not rec:
+        return False
+    try:
+        if rec.get('video_path') and os.path.exists(rec['video_path']):
+            os.remove(rec['video_path'])
+        if rec.get('thumbnail_path') and os.path.exists(rec['thumbnail_path']):
+            os.remove(rec['thumbnail_path'])
+        logger.info(f"[Recordings] Manually deleted recording: {rec_id}")
+        return True
+    except Exception as err:
+        logger.error(f"[Recordings] Error deleting recording {rec_id}: {err}")
+        return False
+
+
+def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: float, mqtt_client):
+    """
+    Asynchronously records a video clip upon person detection.
+    Saves pre-roll frames + live frames into an MP4 video file and saves a thumbnail image.
+    Registers metadata with auto-deletion timer.
+    """
+    global is_recording_active
+    is_recording_active = True
+
+    try:
+        timestamp_iso = datetime.now(timezone.utc).isoformat()
+        video_filename = f"{rec_id}.mp4"
+        thumb_filename = f"{rec_id}.jpg"
+        video_path = os.path.join(RECORDINGS_DIR, video_filename)
+        thumb_path = os.path.join(THUMBNAILS_DIR, thumb_filename)
+
+        # 1. Save Thumbnail Image with Bounding Box
+        thumb_img = trigger_frame.copy()
+        if bbox and len(bbox) == 4:
+            bx, by, bw, bh = bbox
+            cv2.rectangle(thumb_img, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+            cv2.putText(
+                thumb_img,
+                f"PERSON {int(confidence*100)}%",
+                (bx, max(20, by - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 0, 255),
+                2
+            )
+        cv2.imwrite(thumb_path, thumb_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+        # 2. Gather Pre-Roll Frames from History
+        with history_lock:
+            recorded_frames = list(frame_history)
+
+        # 3. Capture Live Frames for RECORDING_DURATION_SECONDS
+        fps = 15
+        total_frames_target = fps * RECORDING_DURATION_SECONDS
+        frame_interval = 1.0 / fps
+        start_time = time.time()
+
+        logger.info(f"[Recording] 🎥 Started recording video clip '{video_filename}' ({RECORDING_DURATION_SECONDS}s)...")
+
+        while (time.time() - start_time) < RECORDING_DURATION_SECONDS and running:
+            with frame_cond:
+                if latest_cv_frame is not None:
+                    recorded_frames.append(latest_cv_frame.copy())
+            time.sleep(frame_interval)
+
+        if not recorded_frames:
+            recorded_frames = [trigger_frame]
+
+        # 4. Write Frames to MP4 Video File
+        h, w = recorded_frames[0].shape[:2]
+        
+        # Try mp4v fourcc codec first
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+        
+        if not out.isOpened():
+            # Fallback codec
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+
+        for f in recorded_frames:
+            if f.shape[:2] != (h, w):
+                f = cv2.resize(f, (w, h))
+            out.write(f)
+        out.release()
+
+        created_at = time.time()
+
+        # 5. Register in Recordings Registry
+        with recordings_lock:
+            recordings_registry[rec_id] = {
+                'id': rec_id,
+                'filename': video_filename,
+                'video_path': video_path,
+                'thumbnail_path': thumb_path,
+                'created_at': created_at,
+                'timestamp_iso': timestamp_iso,
+                'duration': RECORDING_DURATION_SECONDS,
+                'confidence': confidence,
+                'bbox': bbox,
+                'device_uid': DEVICE_UID
+            }
+
+        logger.info(
+            f"[Recording] ✅ Saved video clip '{video_filename}' ({len(recorded_frames)} frames). "
+            f"Will auto-delete in {RECORDING_RETENTION_SECONDS} seconds."
+        )
+
+        # 6. Publish Video Metadata to MQTT
+        video_payload = {
+            "type": "video_recorded",
+            "camera": DEVICE_UID,
+            "recording_id": rec_id,
+            "filename": video_filename,
+            "video_url": f"/recordings/{video_filename}",
+            "thumbnail_url": f"/recordings/thumbnails/{thumb_filename}",
+            "timestamp": timestamp_iso,
+            "confidence": round(float(confidence), 2),
+            "duration": RECORDING_DURATION_SECONDS,
+            "retention_seconds": RECORDING_RETENTION_SECONDS,
+            "expires_in": RECORDING_RETENTION_SECONDS
+        }
+        video_json = json.dumps(video_payload)
+        mqtt_client.publish(TOPIC_PERSON_ALERT, video_json, qos=0)
+        if SCOPED_TOPIC_ALERT:
+            mqtt_client.publish(SCOPED_TOPIC_ALERT, video_json, qos=0)
+
+    except Exception as err:
+        logger.error(f"[Recording] Error during video capture: {err}")
+    finally:
+        is_recording_active = False
+
+
+# ===========================================================================
+# ⏰ AUTO-DELETION CLEANUP WORKER THREAD
+# ===========================================================================
+def recording_cleanup_worker():
+    """
+    👉 AUTO-DELETION FEATURE:
+    Dedicated background worker thread that monitors recorded videos.
+    Automatically removes video files and thumbnails older than RECORDING_RETENTION_SECONDS (1 minute / 60s).
+    """
+    logger.info(
+        f"[Cleanup] 🧹 Auto-deletion thread started. "
+        f"Videos will automatically be deleted after {RECORDING_RETENTION_SECONDS} seconds."
+    )
+
+    while running:
+        time.sleep(2)  # Check every 2 seconds for expired clips
+        now = time.time()
+        expired_ids = []
+
+        with recordings_lock:
+            for rec_id, rec in list(recordings_registry.items()):
+                created_at = rec.get('created_at', now)
+                age = now - created_at
+                # ===================================================================
+                # 👉 CHECK RETENTION DURATION HERE
+                # If the video age exceeds RECORDING_RETENTION_SECONDS (60 seconds),
+                # trigger automatic deletion.
+                # ===================================================================
+                if age >= RECORDING_RETENTION_SECONDS:
+                    expired_ids.append((rec_id, rec))
+
+        # Delete expired video and thumbnail files from disk
+        for rec_id, rec in expired_ids:
+            try:
+                v_path = rec.get('video_path')
+                t_path = rec.get('thumbnail_path')
+                if v_path and os.path.exists(v_path):
+                    os.remove(v_path)
+                if t_path and os.path.exists(t_path):
+                    os.remove(t_path)
+                with recordings_lock:
+                    recordings_registry.pop(rec_id, None)
+                logger.info(
+                    f"[Auto-Delete] 🗑️ Automatically deleted expired video: '{rec.get('filename')}' "
+                    f"(Age > {RECORDING_RETENTION_SECONDS}s)."
+                )
+            except Exception as e:
+                logger.error(f"[Auto-Delete] Failed to delete video {rec_id}: {e}")
+
+    logger.info("[Cleanup] Auto-deletion thread stopped.")
+
+
+# ---------------------------------------------------------------------------
 # ngrok Tunnel
 # ---------------------------------------------------------------------------
 def start_ngrok_tunnel(mqtt_client):
@@ -347,7 +679,7 @@ def camera_capture_worker():
     """
     Dedicated thread that maintains ONE single persistent connection to the ESP32-CAM.
     Drains frames continuously to prevent lag and buffer buildup.
-    Updates in-memory latest_frame_bytes and latest_cv_frame for relay and AI detection.
+    Updates in-memory latest_frame_bytes, latest_cv_frame, and frame_history ring buffer.
     """
     global latest_frame_bytes, latest_cv_frame
 
@@ -389,6 +721,10 @@ def camera_capture_worker():
                     latest_cv_frame = frame
                     frame_cond.notify_all()
 
+                # Add to ring buffer for video pre-roll
+                with history_lock:
+                    frame_history.append(frame.copy())
+
         cap.release()
 
     logger.info("[Capture] Camera capture worker thread stopped.")
@@ -407,8 +743,8 @@ def init_person_detector():
 def ai_detection_worker(mqtt_client):
     """
     Dedicated thread for OpenCV person detection.
-    Pulls the latest frame from memory and runs HOG detection independently,
-    without stalling or blocking the video stream!
+    Pulls the latest frame from memory and runs HOG detection independently.
+    Triggers alert AND starts automatic video recording when a person is detected!
     """
     global last_alert_time
 
@@ -452,18 +788,32 @@ def ai_detection_worker(mqtt_client):
             best_box = boxes[0].tolist()
             orig_box = [int(c / scale) for c in best_box]
 
+            # Generate unique recording ID
+            rec_id = f"rec_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(time.time()*1000)%1000}"
+
             alert_payload = {
                 "camera": DEVICE_UID,
                 "confidence": round(float(best_weight), 2),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "bbox": orig_box,
+                "recording_id": rec_id,
+                "retention_seconds": RECORDING_RETENTION_SECONDS
             }
             alert_json = json.dumps(alert_payload)
             mqtt_client.publish(TOPIC_PERSON_ALERT, alert_json, qos=0)
             if SCOPED_TOPIC_ALERT:
                 mqtt_client.publish(SCOPED_TOPIC_ALERT, alert_json, qos=0)
-            logger.info(f"[Detection] ALERT: Person detected on {DEVICE_UID}! Confidence: {best_weight:.2f}")
+            logger.info(f"[Detection] 🚨 ALERT: Person detected on {DEVICE_UID}! Confidence: {best_weight:.2f}")
             last_alert_time = now
+
+            # 🎬 Trigger automatic video recording thread
+            if not is_recording_active:
+                rec_thread = threading.Thread(
+                    target=record_video_worker,
+                    args=(rec_id, frame, orig_box, best_weight, mqtt_client),
+                    daemon=True
+                )
+                rec_thread.start()
 
         # Run detection at ~5 FPS to keep CPU cool while video streams at 15-20 FPS
         time.sleep(0.2)
@@ -475,9 +825,10 @@ def ai_detection_worker(mqtt_client):
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    logger.info("=" * 50)
-    logger.info(" SecureHome AI Processor Service (Multi-Threaded)")
-    logger.info("=" * 50)
+    logger.info("=" * 55)
+    logger.info(" SecureHome AI Processor & Video Recording Service")
+    logger.info(f" ⏱️ Video Retention Duration: {RECORDING_RETENTION_SECONDS} seconds (1 minute auto-delete)")
+    logger.info("=" * 55)
 
     # 1. MQTT Client -- HiveMQ Cloud (TLS + auth)
     mqtt_client = mqtt.Client(
@@ -497,7 +848,7 @@ def main():
         logger.error(f"Could not connect to HiveMQ Cloud at {MQTT_BROKER_HOST}:{MQTT_PORT}: {e}")
         return 1
 
-    # 2. MJPEG Relay HTTP Server (daemon thread)
+    # 2. MJPEG Relay & Video Server (daemon thread)
     start_relay_server()
 
     # 3. ngrok Tunnel -- publish public HTTPS URL to MQTT
@@ -512,7 +863,11 @@ def main():
     detection_thread = threading.Thread(target=ai_detection_worker, args=(mqtt_client,), daemon=True)
     detection_thread.start()
 
-    logger.info("AI Processor running. Stream and AI detection active. Press Ctrl+C to stop.")
+    # 6. Start Automatic Video Deletion Cleanup Thread (1-minute auto-delete)
+    cleanup_thread = threading.Thread(target=recording_cleanup_worker, daemon=True)
+    cleanup_thread.start()
+
+    logger.info("AI Processor running. Stream, Detection & 1-Minute Video Retention active. Press Ctrl+C to stop.")
     try:
         while running:
             time.sleep(0.5)
@@ -537,3 +892,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
