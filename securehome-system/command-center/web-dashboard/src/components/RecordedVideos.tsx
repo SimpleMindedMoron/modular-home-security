@@ -222,15 +222,15 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
 
           // If this alert belongs to current camera or wildcard
           if (!payload.camera || payload.camera === deviceId || payload.camera === 'cam_front_door' || payload.camera === 'ESP32_CAM_01') {
-            const recId = payload.recording_id || `rec_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+            const recId = payload.recording_id || `rec_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
             const timeStr = payload.timestamp
               ? new Date(payload.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               : new Date().toLocaleTimeString();
 
             const savedRelay = typeof window !== 'undefined' ? localStorage.getItem('securehome_camera_relay_url') : '';
-            const validRelay = (relayUrl && relayUrl.includes('ngrok'))
+            const validRelay = relayUrl.startsWith('https://')
               ? relayUrl
-              : (savedRelay && savedRelay.includes('ngrok') ? savedRelay : '');
+              : (savedRelay?.startsWith('https://') ? savedRelay : '');
             const baseRelay = validRelay ? validRelay.replace(/\/+$/, '') : '';
             const resolveMediaUrl = (url?: string) => {
               if (!url) return '';
@@ -241,7 +241,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
             const videoUrl = resolveMediaUrl(payload.video_url);
             const thumbnailUrl = resolveMediaUrl(payload.thumbnail_url);
 
-    const newClip: RecordedVideoItem = {
+            const newClip: RecordedVideoItem = {
               id: recId,
               deviceId: targetCam,
               cameraName: deviceName,

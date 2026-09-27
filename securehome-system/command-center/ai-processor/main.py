@@ -9,7 +9,7 @@ Architecture:
   Thread 2: AI Detection Worker       — Runs OpenCV HOG person detection on cached frames
                                         independently without blocking the video stream.
   Thread 3: ThreadingHTTPServer       — Serves MJPEG stream (/stream) & web preview (/)
-                                        from memory to local clients & ngrok tunnel.
+                                        from memory to local clients & Cloudflare Tunnel.
 """
 
 import os
@@ -20,6 +20,10 @@ import json
 import signal
 import logging
 import threading
+import queue
+import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -53,7 +57,20 @@ TOPIC_PERSON_ALERT        = os.getenv('TOPIC_PERSON_ALERT', 'security/alerts/per
 ALERT_COOLDOWN_SECONDS    = float(os.getenv('ALERT_COOLDOWN_SECONDS', 10.0))
 MIN_CONFIDENCE            = float(os.getenv('MIN_CONFIDENCE', 0.5))
 RELAY_PORT                = int(os.getenv('RELAY_PORT', 8765))
-NGROK_AUTHTOKEN           = os.getenv('NGROK_AUTHTOKEN', '')
+CLOUDFLARED_BIN            = os.getenv('CLOUDFLARED_BIN', 'cloudflared')
+cloudflared_process = None
+
+
+def stop_cloudflare_tunnel():
+    global cloudflared_process
+    if cloudflared_process and cloudflared_process.poll() is None:
+        cloudflared_process.terminate()
+        try:
+            cloudflared_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            cloudflared_process.kill()
+            cloudflared_process.wait()
+    cloudflared_process = None
 
 # Multi-tenant Claim Token & Device UID
 CLAIM_TOKEN               = os.getenv('CLAIM_TOKEN', '').strip()
@@ -235,7 +252,7 @@ HTML_VIEWER_PAGE = """<!DOCTYPE html>
 <body>
   <div class="badge">● LIVE RELAY ACTIVE</div>
   <h2>SecureHome Vision Node</h2>
-  <p>Live MJPEG Stream via ngrok Relay</p>
+    <p>Live MJPEG Stream via Cloudflare Tunnel</p>
   <div class="stream-container">
     <img src="/stream" alt="ESP32-CAM Live Feed" />
   </div>
@@ -664,32 +681,56 @@ def recording_cleanup_worker():
 
 
 # ---------------------------------------------------------------------------
-# ngrok Tunnel
+# Cloudflare Quick Tunnel
 # ---------------------------------------------------------------------------
-def start_ngrok_tunnel(mqtt_client):
-    """
-    Opens an ngrok HTTP tunnel to the local relay port.
-    Publishes the public HTTPS URL to MQTT (retained) and returns it.
-    """
-    if not NGROK_AUTHTOKEN:
+def start_cloudflare_tunnel(mqtt_client):
+    """Starts a free Cloudflare Quick Tunnel and publishes its HTTPS URL over MQTT."""
+    global cloudflared_process
+    cloudflared_path = shutil.which(CLOUDFLARED_BIN)
+    if not cloudflared_path:
         logger.warning(
-            "[ngrok] NGROK_AUTHTOKEN not set in .env -- skipping tunnel. "
-            "Camera stream will only work on the local network.\n"
-            "  -> Get a free token at: https://dashboard.ngrok.com/get-started/your-authtoken"
+            "[cloudflared] Executable not found; skipping public tunnel. "
+            "Install cloudflared to expose the camera stream outside your network."
         )
         return None
 
     try:
-        from pyngrok import ngrok, conf as ngrok_conf
-        ngrok_conf.get_default().auth_token = NGROK_AUTHTOKEN
+        cloudflared_process = subprocess.Popen(
+            [cloudflared_path, 'tunnel', '--no-autoupdate', '--url', f'http://127.0.0.1:{RELAY_PORT}'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        output_lines = queue.Queue()
 
-        tunnel    = ngrok.connect(RELAY_PORT, "http")
-        pub_url   = tunnel.public_url.replace("http://", "https://")
-        relay_url = f"{pub_url}/stream"
+        def collect_output():
+            for raw_line in cloudflared_process.stdout:
+                output_line = raw_line.rstrip()
+                match = re.search(r'https://[a-z0-9-]+\.trycloudflare\.com', output_line, re.IGNORECASE)
+                if match:
+                    output_lines.put(match.group(0))
+                logger.info("[cloudflared] %s", output_line)
 
-        logger.info(f"[ngrok] Tunnel open -> {relay_url}")
+        threading.Thread(target=collect_output, daemon=True).start()
+        deadline = time.monotonic() + 30
+        relay_url = None
+        while time.monotonic() < deadline:
+            try:
+                output_line = output_lines.get(timeout=0.5)
+            except queue.Empty:
+                if cloudflared_process.poll() is not None:
+                    break
+                continue
 
-        payload = json.dumps({"url": relay_url, "source": "ngrok", "device_uid": DEVICE_UID})
+            relay_url = f'{output_line}/stream'
+            break
+
+        if not relay_url:
+            raise RuntimeError('No trycloudflare.com URL received within 30 seconds')
+
+        logger.info("[cloudflared] Tunnel open -> %s", relay_url)
+        payload = json.dumps({"url": relay_url, "source": "cloudflare", "device_uid": DEVICE_UID})
         mqtt_client.publish(TOPIC_CAMERA_RELAY, payload, qos=1, retain=True)
         logger.info(f"[MQTT] Published relay URL to {TOPIC_CAMERA_RELAY}")
 
@@ -700,7 +741,8 @@ def start_ngrok_tunnel(mqtt_client):
         return relay_url
 
     except Exception as e:
-        logger.error(f"[ngrok] Failed to open tunnel: {e}")
+        logger.error("[cloudflared] Failed to open tunnel: %s", e)
+        stop_cloudflare_tunnel()
         return None
 
 
@@ -883,9 +925,9 @@ def main():
     # 2. MJPEG Relay & Video Server (daemon thread)
     start_relay_server()
 
-    # 3. ngrok Tunnel -- publish public HTTPS URL to MQTT
+    # 3. Cloudflare Tunnel -- publish public HTTPS URL to MQTT
     time.sleep(1)
-    start_ngrok_tunnel(mqtt_client)
+    start_cloudflare_tunnel(mqtt_client)
 
     # 4. Start Camera Ingestion Thread (single connection to ESP32)
     capture_thread = threading.Thread(target=camera_capture_worker, daemon=True)
@@ -911,12 +953,7 @@ def main():
     mqtt_client.loop_stop()
     mqtt_client.disconnect()
 
-    if NGROK_AUTHTOKEN:
-        try:
-            from pyngrok import ngrok
-            ngrok.kill()
-        except Exception:
-            pass
+    stop_cloudflare_tunnel()
 
     logger.info("AI Processor stopped.")
     return 0

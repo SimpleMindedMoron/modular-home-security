@@ -47,12 +47,12 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const relayUrlRef = useRef<string>(relayUrl);
 
-  // Use same-origin Edge proxy for ngrok streams to bypass cross-site cookie blocking in Brave/Safari
+  // Proxy public tunnel streams to attach provider-specific browser-warning headers.
   const effectiveStreamSrc = React.useMemo(() => {
     if (!streamUrl) return '';
     const separator = streamUrl.includes('?') ? '&' : '?';
     const targetWithCache = `${streamUrl}${separator}_t=${streamKey}`;
-    if (streamUrl.includes('ngrok')) {
+    if (streamUrl.includes('ngrok') || streamUrl.includes('trycloudflare.com')) {
       return `/api/stream?url=${encodeURIComponent(targetWithCache)}`;
     }
     return targetWithCache;
@@ -423,10 +423,10 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
                 className={`source-badge source-badge--${streamSource.toLowerCase()}`}
                 title={
                   streamSource === 'RELAY'
-                    ? 'Stream served via ngrok relay — works from any network'
+                    ? 'Stream served via public relay — works from any network'
                     : streamSource === 'LOCAL'
-                    ? 'Stream served directly from local IP — home network only'
-                    : 'Manually configured stream URL'
+                      ? 'Stream served directly from local IP — home network only'
+                      : 'Manually configured stream URL'
                 }
               >
                 {streamSource === 'RELAY' ? '🌐 RELAY' : streamSource === 'LOCAL' ? '🏠 LOCAL' : '✏️ MANUAL'}

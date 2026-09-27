@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
     const response = await fetch(url, {
       headers: {
         'ngrok-skip-browser-warning': 'true',
+        'cf-quick-tunnel': 'true',
         'User-Agent': 'SecureHome-Edge-Relay/1.0',
       },
     });

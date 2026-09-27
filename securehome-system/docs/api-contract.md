@@ -26,7 +26,7 @@ This document defines the strict API contract for communication between all syst
 | `users/<token>/doors/<uid>/access_log` | `security/door/access_log` | Access Node | Web Dashboard | JSON Object | No | 1 | RFID/PIN authentication audit log. |
 | `users/<token>/cameras/<uid>/discovery` | `security/camera/discovery` | Vision Node | Web Dashboard, AI | JSON Object | **Yes** | 1 | Local stream IP/port discovery broadcast. |
 | `users/<token>/cameras/<uid>/status` | `security/camera/status` | Vision Node | Web Dashboard, AI | String (`"ONLINE"` / `"OFFLINE"`) | **Yes** | 1 | Availability status (LWT). |
-| `users/<token>/cameras/<uid>/relay_url` | `security/camera/relay_url` | AI Processor | Web Dashboard | JSON Object | **Yes** | 1 | Public HTTPS relay URL via ngrok. |
+| `users/<token>/cameras/<uid>/relay_url` | `security/camera/relay_url` | AI Processor | Web Dashboard | JSON Object | **Yes** | 1 | Public HTTPS relay URL via Cloudflare Tunnel. |
 | `users/<token>/alerts/person` | `security/alerts/person` | AI Processor | Web Dashboard | JSON Object | No | 0 | Real-time computer vision detection alert. |
 
 ---

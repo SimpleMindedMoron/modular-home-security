@@ -86,7 +86,7 @@ When flashing the AI-Thinker ESP32-CAM, select:
 | :--- | :--- | :--- | :--- |
 | `users/<claim_token>/cameras/<device_uid>/discovery`<br/>*(fallback: `security/camera/discovery`)* | `{"node_id":"...","ip":"192.168.1.X","port":81,"stream_path":"/stream"}` | `true` | Dynamic IP and port announcement broadcast upon Wi-Fi + MQTT connection. |
 | `users/<claim_token>/cameras/<device_uid>/status`<br/>*(fallback: `security/camera/status`)* | `"ONLINE"` or `"OFFLINE"` | `true` | Availability state. Configured with MQTT Last Will and Testament (LWT) for automatic `"OFFLINE"` detection on abrupt disconnection. |
-| `users/<claim_token>/cameras/<device_uid>/relay_url`<br/>*(fallback: `security/camera/relay_url`)* | `{"url":"https://...ngrok-free.app/stream"}` | `true` | Public HTTPS relay stream broadcast by the AI Processor service. |
+| `users/<claim_token>/cameras/<device_uid>/relay_url`<br/>*(fallback: `security/camera/relay_url`)* | `{"url":"https://<random>.trycloudflare.com/stream"}` | `true` | Public HTTPS relay stream broadcast by the AI Processor service. |
 
 ---
 

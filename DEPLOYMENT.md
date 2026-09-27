@@ -85,5 +85,8 @@ graph TD
 * **ESP32 Nodes**: Connect to HiveMQ Cloud with TLS port `8883`.
 * **Camera Stream**:
   * Your AI Processor runs on your home PC or Raspberry Pi on the same Wi-Fi as your ESP32-CAM.
-  * The AI Processor creates an ngrok tunnel relay and publishes the live relay URL to HiveMQ Cloud.
+   * Install `cloudflared` on that machine using the [official installation instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/). No Cloudflare account, domain, or token is needed for a Quick Tunnel.
+   * The AI Processor starts a free Cloudflare Quick Tunnel and publishes its live relay URL to HiveMQ Cloud. The URL changes when the processor restarts.
   * Your Vercel cloud dashboard automatically receives the relay URL via MQTT and displays the live video stream anywhere in the world!
+
+Cloudflare Quick Tunnels are free but intended for testing and development; they have no uptime guarantee and are limited to 200 concurrent in-flight requests. For a persistent production URL, configure a named Cloudflare Tunnel with a hostname.
