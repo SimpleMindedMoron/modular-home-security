@@ -338,8 +338,13 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
             recordings_list = []
             with recordings_lock:
                 for r_id, r in recordings_registry.items():
-                    created_at = r.get('created_at', now)
-                    age = now - created_at
+                    created_iso = r.get('created_at') or r.get('timestamp_iso')
+                    try:
+                        from datetime import datetime as _dt
+                        created_epoch = _dt.fromisoformat(created_iso).timestamp() if created_iso else now
+                    except Exception:
+                        created_epoch = now
+                    age = now - created_epoch
                     remaining = max(0, int(query_retention - age))
                     recordings_list.append({
                         "id": r_id,
@@ -347,10 +352,9 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
                         "filename": r.get('filename'),
                         "video_url": f"/recordings/{r.get('filename')}",
                         "thumbnail_url": f"/recordings/thumbnails/{r_id}.jpg",
-                        "created_at": r.get('timestamp_iso'),
-                        "timestamp": r.get('timestamp_iso'),
+                        "created_at": created_iso,
+                        "timestamp": created_iso,
                         "duration": r.get('duration', RECORDING_DURATION_SECONDS),
-                        "confidence": r.get('confidence', 0.9),
                         "remaining_seconds": remaining,
                         "expires_in": remaining,
                         "retention_seconds": query_retention
@@ -510,20 +514,15 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
         video_path = os.path.join(RECORDINGS_DIR, video_filename)
         thumb_path = os.path.join(THUMBNAILS_DIR, thumb_filename)
 
-        # 1. Save Thumbnail Image with Bounding Box
+        # 1. Save clean Thumbnail with a simple timestamp in the corner only
         thumb_img = trigger_frame.copy()
-        if bbox and len(bbox) == 4:
-            bx, by, bw, bh = bbox
-            cv2.rectangle(thumb_img, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
-            cv2.putText(
-                thumb_img,
-                f"PERSON {int(confidence*100)}%",
-                (bx, max(20, by - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 0, 255),
-                2
-            )
+        ts_label = datetime.now().strftime('%Y-%m-%d  %H:%M:%S')
+        # Shadow for readability
+        cv2.putText(thumb_img, ts_label, (11, thumb_img.shape[0] - 11),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
+        # White text on top
+        cv2.putText(thumb_img, ts_label, (10, thumb_img.shape[0] - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.imwrite(thumb_path, thumb_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         # 2. Gather Pre-Roll Frames from History
@@ -565,7 +564,7 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
             out.write(f)
         out.release()
 
-        created_at = time.time()
+        created_at_iso = datetime.now(timezone.utc).isoformat()
 
         # 5. Register in Recordings Registry
         with recordings_lock:
@@ -574,11 +573,10 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
                 'filename': video_filename,
                 'video_path': video_path,
                 'thumbnail_path': thumb_path,
-                'created_at': created_at,
+                'created_at': created_at_iso,
                 'timestamp_iso': timestamp_iso,
                 'duration': RECORDING_DURATION_SECONDS,
                 'confidence': confidence,
-                'bbox': bbox,
                 'device_uid': DEVICE_UID
             }
 
@@ -633,13 +631,14 @@ def recording_cleanup_worker():
 
         with recordings_lock:
             for rec_id, rec in list(recordings_registry.items()):
-                created_at = rec.get('created_at', now)
-                age = now - created_at
-                # ===================================================================
-                # 👉 CHECK RETENTION DURATION HERE
-                # If the video age exceeds RECORDING_RETENTION_SECONDS (60 seconds),
-                # trigger automatic deletion.
-                # ===================================================================
+                created_at_val = rec.get('created_at', None)
+                try:
+                    # created_at is now an ISO string
+                    from datetime import datetime as _dt
+                    created_epoch = _dt.fromisoformat(created_at_val).timestamp() if created_at_val else now
+                except Exception:
+                    created_epoch = now
+                age = now - created_epoch
                 if age >= RECORDING_RETENTION_SECONDS:
                     expired_ids.append((rec_id, rec))
 

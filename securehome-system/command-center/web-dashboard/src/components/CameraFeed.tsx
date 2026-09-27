@@ -45,6 +45,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   const [retryCount, setRetryCount] = useState<number>(0);
   const [streamKey, setStreamKey] = useState<number>(Date.now());
   const containerRef = useRef<HTMLDivElement>(null);
+  const relayUrlRef = useRef<string>(relayUrl);
 
   // Use same-origin Edge proxy for ngrok streams to bypass cross-site cookie blocking in Brave/Safari
   const effectiveStreamSrc = React.useMemo(() => {
@@ -76,6 +77,11 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
       setStatus('ONLINE');
     }
   }, [initialStreamUrl, deviceId]);
+
+  // Keep relayUrlRef in sync so MQTT handlers always see the latest value
+  useEffect(() => {
+    relayUrlRef.current = relayUrl;
+  }, [relayUrl]);
 
   // MQTT auto-discovery, relay URL & status telemetry
   useEffect(() => {
@@ -128,7 +134,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
             const path = data.stream_path || '/stream';
             const url = `http://${data.ip}:${port}${path}`;
             // Only use local URL if no relay is available
-            if (!relayUrl) {
+            if (!relayUrlRef.current) {
               setStreamUrl(url);
               setInputUrl(url);
               setStreamSource('LOCAL');
@@ -142,7 +148,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
           }
         } catch {
           const url = msgStr.startsWith('http') ? msgStr : `http://${msgStr}/stream`;
-          if (!relayUrl) {
+          if (!relayUrlRef.current) {
             setStreamUrl(url);
             setInputUrl(url);
             setStreamSource('LOCAL');
@@ -174,6 +180,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
 
     return () => {
       client.off('message', onMessage);
+      client.off('connect', onConnect);
     };
   }, [relayUrl, topicPrefix, deviceId]);
 

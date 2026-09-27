@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 
-export const runtime = 'edge';
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const url = req.nextUrl.searchParams.get('url');
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     return new Response(response.body, {
       status: response.status,
       headers: {
-        'Content-Type': response.headers.get('content-type') || 'multipart/x-mixed-replace; boundary=--mjpegframe',
+        'Content-Type': response.headers.get('content-type') || 'multipart/x-mixed-replace; boundary=frame',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Access-Control-Allow-Origin': '*',
       },

@@ -626,6 +626,7 @@ void checkRFID() {
 // =====================================================================
 // KEYPAD SCAN
 // =====================================================================
+bool isAuthorizedPin(const String &pin); // forward declaration
 void checkKeypad() {
   char key = keypad.getKey();
   if (!key) return;

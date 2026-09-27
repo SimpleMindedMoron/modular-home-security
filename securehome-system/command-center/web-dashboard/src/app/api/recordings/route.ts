@@ -26,7 +26,8 @@ const API_RECORDING_RETENTION_SECONDS = 60;
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const deviceUid = searchParams.get('device_uid');
-  const aiProcessorUrl = searchParams.get('relay_url') || process.env.AI_PROCESSOR_URL || 'http://127.0.0.1:8765';
+  // Always talk to the local AI processor directly — the relay_url is only for the MJPEG stream
+  const aiProcessorUrl = process.env.AI_PROCESSOR_URL || 'http://127.0.0.1:8765';
   const customRetention = searchParams.get('retention_seconds');
   const activeRetention = customRetention && !isNaN(Number(customRetention))
     ? Number(customRetention)
@@ -57,8 +58,12 @@ export async function GET(request: NextRequest) {
         // Merge remote AI processor recordings with memory items
         const remoteList = data.recordings.map((r: any) => ({
           ...r,
-          video_url: r.video_url.startsWith('http') ? r.video_url : `${aiProcessorUrl}${r.video_url}`,
-          thumbnail_url: r.thumbnail_url?.startsWith('http') ? r.thumbnail_url : `${aiProcessorUrl}${r.thumbnail_url}`,
+          video_url: r.video_url.startsWith('http') ? r.video_url : (r.video_url.startsWith('/') ? r.video_url : `/${r.video_url}`),
+          thumbnail_url: r.thumbnail_url?.startsWith('http')
+            ? r.thumbnail_url
+            : r.thumbnail_url
+            ? (r.thumbnail_url.startsWith('/') ? r.thumbnail_url : `/${r.thumbnail_url}`)
+            : '',
           created_at: r.created_at ? new Date(r.created_at).getTime() : now,
         }));
         return NextResponse.json({
@@ -139,5 +144,16 @@ export async function DELETE(request: NextRequest) {
   }
 
   memoryRecordings = memoryRecordings.filter((rec) => rec.id !== id);
+
+  // Also notify local AI processor if reachable to delete file on disk
+  const aiProcessorUrl = process.env.AI_PROCESSOR_URL || 'http://127.0.0.1:8765';
+  try {
+    await fetch(`${aiProcessorUrl}/api/recordings/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  } catch {
+    // AI processor offline or unreachable
+  }
+
   return NextResponse.json({ success: true, deleted_id: id });
 }

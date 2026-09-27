@@ -337,7 +337,6 @@ export default function HomePage() {
                 key={`recordings-${cam.id}`}
                 deviceId={cam.device_uid}
                 deviceName={cam.name}
-                relayUrl={cam.stream_url ? cam.stream_url.replace('/stream', '') : ''}
                 topicPrefix={claimToken ? `users/${claimToken}/cameras/${cam.device_uid}` : undefined}
               />
             ))}

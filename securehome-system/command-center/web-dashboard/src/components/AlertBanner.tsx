@@ -16,6 +16,7 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({ claimToken, userId }) 
     confidence: number;
     timestamp: string;
   } | null>(null);
+  const dismissTimerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const client = getMqttClient();
@@ -53,11 +54,12 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({ claimToken, userId }) 
           }
 
           // Auto-dismiss alert after 12 seconds
-          const timer = setTimeout(() => {
+          if (dismissTimerRef.current) {
+            clearTimeout(dismissTimerRef.current);
+          }
+          dismissTimerRef.current = setTimeout(() => {
             setAlert(null);
           }, 12000);
-
-          return () => clearTimeout(timer);
         } catch (e) {
           console.error('[MQTT] Failed to parse alert message:', e);
         }
@@ -71,7 +73,11 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({ claimToken, userId }) 
     client.on('message', onMessage);
 
     return () => {
+      if (dismissTimerRef.current) {
+        clearTimeout(dismissTimerRef.current);
+      }
       client.off('message', onMessage);
+      client.off('connect', onConnect);
     };
   }, [claimToken, userId]);
 

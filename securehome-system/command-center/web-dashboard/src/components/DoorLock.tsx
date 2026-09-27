@@ -142,6 +142,7 @@ export const DoorLock: React.FC<DoorLockProps> = ({
 
     return () => {
       client.off('message', onMessage);
+      client.off('connect', onConnect);
     };
   }, [topicPrefix]);
 

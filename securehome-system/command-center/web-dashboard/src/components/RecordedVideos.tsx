@@ -6,16 +6,10 @@ import {
   Play,
   Trash2,
   Clock,
-  ShieldAlert,
   Download,
   X,
-  Sparkles,
-  AlertCircle,
-  Eye,
   Film,
-  Maximize2,
   RefreshCw,
-  Flame,
 } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
@@ -94,8 +88,6 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
   const [recordings, setRecordings] = useState<RecordedVideoItem[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<RecordedVideoItem | null>(null);
   const [now, setNow] = useState<number>(Date.now());
-  const [isSimulating, setIsSimulating] = useState<boolean>(false);
-  const [justDeletedId, setJustDeletedId] = useState<string | null>(null);
 
   // User-selected retention duration (persisted in localStorage)
   const [retentionSeconds, setRetentionSeconds] = useState<number>(() => {
@@ -169,11 +161,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
   // 2. Fetch initial recordings from backend / AI processor API
   const fetchRecordings = useCallback(async () => {
     try {
-      const targetRelay = relayUrl || (typeof window !== 'undefined' ? localStorage.getItem('securehome_camera_relay_url') : '');
-      const url = targetRelay
-        ? `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&relay_url=${encodeURIComponent(targetRelay)}&retention_seconds=${retentionSeconds}`
-        : `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&retention_seconds=${retentionSeconds}`;
-
+      const url = `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&retention_seconds=${retentionSeconds}`;
       const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
@@ -239,15 +227,21 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
               ? new Date(payload.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               : new Date().toLocaleTimeString();
 
-            const baseRelay = relayUrl || (typeof window !== 'undefined' ? localStorage.getItem('securehome_camera_relay_url') : '') || '';
-            const videoUrl = payload.video_url
-              ? (payload.video_url.startsWith('http') ? payload.video_url : `${baseRelay}${payload.video_url}`)
-              : '';
-            const thumbnailUrl = payload.thumbnail_url
-              ? (payload.thumbnail_url.startsWith('http') ? payload.thumbnail_url : `${baseRelay}${payload.thumbnail_url}`)
-              : '';
+            const savedRelay = typeof window !== 'undefined' ? localStorage.getItem('securehome_camera_relay_url') : '';
+            const validRelay = (relayUrl && relayUrl.includes('ngrok'))
+              ? relayUrl
+              : (savedRelay && savedRelay.includes('ngrok') ? savedRelay : '');
+            const baseRelay = validRelay ? validRelay.replace(/\/+$/, '') : '';
+            const resolveMediaUrl = (url?: string) => {
+              if (!url) return '';
+              if (url.startsWith('http://') || url.startsWith('https://')) return url;
+              const path = url.startsWith('/') ? url : `/${url}`;
+              return baseRelay ? `${baseRelay}${path}` : path;
+            };
+            const videoUrl = resolveMediaUrl(payload.video_url);
+            const thumbnailUrl = resolveMediaUrl(payload.thumbnail_url);
 
-            const newClip: RecordedVideoItem = {
+    const newClip: RecordedVideoItem = {
               id: recId,
               deviceId: targetCam,
               cameraName: deviceName,
@@ -286,8 +280,6 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
   // 4. Manual delete handler
   const handleDelete = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setJustDeletedId(id);
-    setTimeout(() => setJustDeletedId(null), 1000);
 
     setRecordings((prev) => prev.filter((r) => r.id !== id));
     if (selectedVideo?.id === id) {
@@ -301,29 +293,6 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
     }
   };
 
-  // 5. Simulated Person Detection & Recording Trigger (For instant testing)
-  const handleSimulateDetection = () => {
-    setIsSimulating(true);
-    const mockId = `mock_rec_${Date.now()}`;
-    const mockTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    const newClip: RecordedVideoItem = {
-      id: mockId,
-      deviceId: deviceId,
-      cameraName: deviceName,
-      filename: `detection_${Date.now()}.mp4`,
-      videoUrl: '', // Will use interactive demo canvas player fallback
-      timestamp: mockTime,
-      createdAt: Date.now(),
-      confidence: 0.96,
-      duration: 10,
-    };
-
-    setTimeout(() => {
-      setRecordings((prev) => [newClip, ...prev]);
-      setIsSimulating(false);
-    }, 400);
-  };
 
   return (
     <section className="recorded-videos-section" aria-label="Detection Video Recordings">
@@ -367,17 +336,6 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
 
           <button
             type="button"
-            className="btn-simulate-detect"
-            onClick={handleSimulateDetection}
-            disabled={isSimulating}
-            title="Simulate person detection and test auto-delete countdown"
-          >
-            <Sparkles size={12} className={isSimulating ? 'spin-icon' : ''} />
-            <span>{isSimulating ? 'Capturing...' : 'Test Detection Clip'}</span>
-          </button>
-
-          <button
-            type="button"
             className="btn-icon btn-refresh-recordings"
             onClick={fetchRecordings}
             title="Refresh recordings list"
@@ -393,11 +351,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
           {recordings.map((clip) => {
             const ageSeconds = Math.floor((now - clip.createdAt) / 1000);
             const remainingSeconds = Math.max(0, retentionSeconds - ageSeconds);
-            const progressPercent = Math.min(100, Math.max(0, (remainingSeconds / retentionSeconds) * 100));
-
-            // Color coding as retention expiration nears
             const isUrgent = remainingSeconds <= Math.min(15, retentionSeconds * 0.25);
-            const isWarning = remainingSeconds <= Math.min(30, retentionSeconds * 0.5) && !isUrgent;
 
             return (
               <div
@@ -416,8 +370,8 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                     />
                   ) : (
                     <div className="recording-thumb-placeholder">
-                      <ShieldAlert size={22} className="thumb-ai-icon" />
-                      <span className="thumb-ai-label">PERSON DETECTED</span>
+                      <Film size={22} />
+                      <span>No preview</span>
                     </div>
                   )}
 
@@ -426,16 +380,6 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                     <div className="play-circle-btn">
                       <Play size={14} fill="currentColor" />
                     </div>
-                  </div>
-
-                  {/* Confidence Badge */}
-                  <div className="recording-badge-confidence">
-                    <span>{Math.round(clip.confidence * 100)}% Match</span>
-                  </div>
-
-                  {/* Duration Badge */}
-                  <div className="recording-badge-duration">
-                    <span>00:{clip.duration.toString().padStart(2, '0')}</span>
                   </div>
                 </div>
 
@@ -450,29 +394,10 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                       type="button"
                       className="recording-delete-btn"
                       onClick={(e) => handleDelete(clip.id, e)}
-                      title="Delete recording now"
+                      title="Delete recording"
                     >
                       <Trash2 size={12} />
                     </button>
-                  </div>
-
-                  {/* ⏳ Auto-Deletion Real-Time Countdown */}
-                  <div className="recording-retention-timer">
-                    <div className="retention-info-row">
-                      <span className={`retention-countdown-text ${isUrgent ? 'text-urgent' : isWarning ? 'text-warning' : ''}`}>
-                        <Flame size={11} /> Auto-deletes in <strong>{formatRemainingTime(remainingSeconds)}</strong>
-                      </span>
-                      <span className="retention-fraction">
-                        {formatRemainingTime(remainingSeconds)} / {getRetentionLabel(retentionSeconds)}
-                      </span>
-                    </div>
-                    {/* Live Progress Bar */}
-                    <div className="retention-progress-track">
-                      <div
-                        className={`retention-progress-fill ${isUrgent ? 'fill-urgent' : isWarning ? 'fill-warning' : ''}`}
-                        style={{ width: `${progressPercent}%` }}
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -507,9 +432,9 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                   <Video size={16} />
                 </div>
                 <div>
-                  <h3>Detection Recording: {selectedVideo.cameraName}</h3>
+                  <h3>Recording — {selectedVideo.cameraName}</h3>
                   <span className="video-modal-meta">
-                    Timestamp: {selectedVideo.timestamp} &bull; Confidence: {Math.round(selectedVideo.confidence * 100)}%
+                    {selectedVideo.timestamp}
                   </span>
                 </div>
               </div>
@@ -537,37 +462,15 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                   Your browser does not support HTML5 video playback.
                 </video>
               ) : (
-                <div className="simulated-video-canvas">
-                  <div className="canvas-scanner-effect" />
-                  <div className="canvas-person-box">
-                    <div className="box-corner tl" />
-                    <div className="box-corner tr" />
-                    <div className="box-corner bl" />
-                    <div className="box-corner br" />
-                    <div className="box-tag">HUMAN_TARGET {Math.round(selectedVideo.confidence * 100)}%</div>
-                  </div>
-                  <div className="canvas-hud-overlay">
-                    <span>RECORDING: {selectedVideo.filename}</span>
-                    <span>FPS: 15 &bull; 1080P PROCESSED</span>
-                    <span className="hud-live-tag">● AI CAPTURE</span>
-                  </div>
+                <div className="recording-thumb-placeholder" style={{ minHeight: 200 }}>
+                  <Film size={32} />
+                  <span>Video not available</span>
                 </div>
               )}
             </div>
 
             {/* Modal Footer with Live Retention Timer & Actions */}
             <div className="video-modal-footer">
-              <div className="modal-retention-pill">
-                <Clock size={13} />
-                <span>
-                  Auto-deletes in{' '}
-                  <strong>
-                    {formatRemainingTime(Math.max(0, retentionSeconds - Math.floor((now - selectedVideo.createdAt) / 1000)))}
-                  </strong>{' '}
-                  ({getRetentionLabel(retentionSeconds)} retention rule)
-                </span>
-              </div>
-
               <div className="modal-actions-right">
                 {selectedVideo.videoUrl && (
                   <a
@@ -576,7 +479,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                     className="btn-secondary btn-download-clip"
                   >
                     <Download size={13} />
-                    <span>Download Clip</span>
+                    <span>Download</span>
                   </a>
                 )}
                 <button
@@ -585,7 +488,7 @@ export const RecordedVideos: React.FC<RecordedVideosProps> = ({
                   onClick={() => handleDelete(selectedVideo.id)}
                 >
                   <Trash2 size={13} />
-                  <span>Delete Now</span>
+                  <span>Delete</span>
                 </button>
               </div>
             </div>

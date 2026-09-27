@@ -102,6 +102,7 @@ export const AccessLog: React.FC<AccessLogProps> = ({ claimToken, userId }) => {
 
     return () => {
       client.off('message', onMessage);
+      client.off('connect', onConnect);
     };
   }, [claimToken, userId]);
 
