@@ -47,12 +47,12 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const relayUrlRef = useRef<string>(relayUrl);
 
-  // Proxy public tunnel streams to attach provider-specific browser-warning headers.
+  // Keep legacy ngrok behind its warning-header proxy; Cloudflare streams connect directly.
   const effectiveStreamSrc = React.useMemo(() => {
     if (!streamUrl) return '';
     const separator = streamUrl.includes('?') ? '&' : '?';
     const targetWithCache = `${streamUrl}${separator}_t=${streamKey}`;
-    if (streamUrl.includes('ngrok') || streamUrl.includes('trycloudflare.com')) {
+    if (streamUrl.includes('ngrok')) {
       return `/api/stream?url=${encodeURIComponent(targetWithCache)}`;
     }
     return targetWithCache;

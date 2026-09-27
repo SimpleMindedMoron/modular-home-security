@@ -523,6 +523,7 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
     """
     global is_recording_active
     is_recording_active = True
+    out = None
 
     try:
         timestamp_iso = datetime.now(timezone.utc).isoformat()
@@ -542,44 +543,62 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.imwrite(thumb_path, thumb_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-        # 2. Gather Pre-Roll Frames from History
+        # 2. Write pre-roll and live frames incrementally at reduced recording resolution.
         with history_lock:
-            recorded_frames = list(frame_history)
+            pre_roll_frames = list(frame_history)
+        if not pre_roll_frames:
+            pre_roll_frames = [trigger_frame]
 
-        # 3. Capture Live Frames for RECORDING_DURATION_SECONDS
         fps = 15
-        total_frames_target = fps * RECORDING_DURATION_SECONDS
         frame_interval = 1.0 / fps
-        start_time = time.time()
+        first_frame = pre_roll_frames[0]
+        frame_height, frame_width = first_frame.shape[:2]
+        resize_scale = min(1.0, 640 / frame_width)
+        output_size = (
+            max(2, int(frame_width * resize_scale) // 2 * 2),
+            max(2, int(frame_height * resize_scale) // 2 * 2),
+        )
+
+        def prepare_recording_frame(frame):
+            if (frame.shape[1], frame.shape[0]) == output_size:
+                return frame
+            return cv2.resize(frame, output_size, interpolation=cv2.INTER_AREA)
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(video_path, fourcc, fps, output_size)
+        if not out.isOpened():
+            out.release()
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            out = cv2.VideoWriter(video_path, fourcc, fps, output_size)
+        if not out.isOpened():
+            out.release()
+            raise RuntimeError(f"Unable to open video writer for {video_path}")
+
+        recorded_frame_count = 0
+        for recorded_frame in pre_roll_frames:
+            out.write(prepare_recording_frame(recorded_frame))
+            recorded_frame_count += 1
+        del pre_roll_frames
 
         logger.info(f"[Recording] 🎥 Started recording video clip '{video_filename}' ({RECORDING_DURATION_SECONDS}s)...")
 
+        # 3. Sample and encode live frames as they arrive, avoiding a full-clip RAM buffer.
+        start_time = time.time()
+        next_frame_at = start_time
         while (time.time() - start_time) < RECORDING_DURATION_SECONDS and running:
+            wait_time = next_frame_at - time.time()
+            if wait_time > 0:
+                time.sleep(wait_time)
+
             with frame_cond:
-                if latest_cv_frame is not None:
-                    recorded_frames.append(latest_cv_frame.copy())
-            time.sleep(frame_interval)
+                frame = latest_cv_frame.copy() if latest_cv_frame is not None else None
+            if frame is not None:
+                out.write(prepare_recording_frame(frame))
+                recorded_frame_count += 1
+            next_frame_at += frame_interval
 
-        if not recorded_frames:
-            recorded_frames = [trigger_frame]
-
-        # 4. Write Frames to MP4 Video File
-        h, w = recorded_frames[0].shape[:2]
-        
-        # Try mp4v fourcc codec first
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
-        
-        if not out.isOpened():
-            # Fallback codec
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
-
-        for f in recorded_frames:
-            if f.shape[:2] != (h, w):
-                f = cv2.resize(f, (w, h))
-            out.write(f)
         out.release()
+        out = None
 
         created_at_iso = datetime.now(timezone.utc).isoformat()
 
@@ -598,7 +617,7 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
             }
 
         logger.info(
-            f"[Recording] ✅ Saved video clip '{video_filename}' ({len(recorded_frames)} frames). "
+            f"[Recording] ✅ Saved video clip '{video_filename}' ({recorded_frame_count} frames). "
             f"Will auto-delete in {RECORDING_RETENTION_SECONDS} seconds."
         )
 
@@ -624,6 +643,8 @@ def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: floa
     except Exception as err:
         logger.error(f"[Recording] Error during video capture: {err}")
     finally:
+        if out is not None:
+            out.release()
         is_recording_active = False
 
 
