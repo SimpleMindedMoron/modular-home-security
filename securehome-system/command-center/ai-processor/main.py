@@ -77,21 +77,16 @@ CLAIM_TOKEN               = os.getenv('CLAIM_TOKEN', '').strip()
 DEVICE_UID                = os.getenv('DEVICE_UID', 'ESP32_CAM_01').strip()
 
 # ===========================================================================
-# 🎯 VIDEO RECORDING & AUTO-DELETION CONFIGURATION
-# ===========================================================================
-# 1. RECORDING_RETENTION_SECONDS: Time in seconds before recorded detection
-#    videos are automatically deleted from storage.
-#    👉 CHANGE THIS NUMBER TO INCREASE OR DECREASE RETENTION DURATION!
-#    Example: 60 = 1 minute | 300 = 5 minutes | 3600 = 1 hour
-RECORDING_RETENTION_SECONDS = int(os.getenv('RECORDING_RETENTION_SECONDS', 60))
-
-# 2. RECORDING_DURATION_SECONDS: Duration of each video clip captured upon detection.
-RECORDING_DURATION_SECONDS  = int(os.getenv('RECORDING_DURATION_SECONDS', 10))
-
-# Directory paths for saving video clips and preview thumbnails
+# Detection snapshots are retained locally and removed automatically.
+SNAPSHOT_RETENTION_SECONDS = int(os.getenv(
+    'SNAPSHOT_RETENTION_SECONDS', os.getenv('RECORDING_RETENTION_SECONDS', 60)
+))
+SNAPSHOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snapshots')
+# Read-only paths for media created by earlier versions.
 RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recordings')
 THUMBNAILS_DIR = os.path.join(RECORDINGS_DIR, 'thumbnails')
-os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+SNAPSHOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'snapshots')
+os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
 
 if CLAIM_TOKEN:
     SCOPED_TOPIC_DISCOVERY = f"users/{CLAIM_TOKEN}/cameras/+/discovery"
@@ -116,15 +111,9 @@ frame_lock         = threading.Lock()
 frame_cond         = threading.Condition(frame_lock)
 
 # Ring buffer of recent frames (pre-roll buffer before detection)
-from collections import deque
-frame_history      = deque(maxlen=30)
-history_lock       = threading.Lock()
-
-# Registry of active video recordings
-# format: { rec_id: { 'id': str, 'filename': str, 'video_path': str, 'thumbnail_path': str, 'created_at': float, 'duration': int, 'confidence': float, 'bbox': list } }
+# Registry of saved detection snapshots
 recordings_registry = {}
-recordings_lock     = threading.Lock()
-is_recording_active = False
+recordings_lock = threading.Lock()
 
 
 def get_stream_url():
@@ -170,7 +159,7 @@ def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
 
 
 def on_mqtt_message(client, userdata, msg):
-    global RECORDING_RETENTION_SECONDS
+    global SNAPSHOT_RETENTION_SECONDS
 
     # 1. Dynamic Video Retention Duration Setting Update
     if msg.topic == 'security/camera/settings/retention' or msg.topic.endswith('/settings/retention'):
@@ -178,8 +167,8 @@ def on_mqtt_message(client, userdata, msg):
             payload = json.loads(msg.payload.decode('utf-8'))
             new_ret = payload.get('retention_seconds')
             if new_ret and int(new_ret) > 0:
-                RECORDING_RETENTION_SECONDS = int(new_ret)
-                logger.info(f"[Settings] ⏱️ Auto-delete video retention updated to {RECORDING_RETENTION_SECONDS} seconds via MQTT.")
+                SNAPSHOT_RETENTION_SECONDS = int(new_ret)
+                logger.info("[Settings] Snapshot retention updated to %s seconds via MQTT.", SNAPSHOT_RETENTION_SECONDS)
         except Exception as err:
             logger.error(f"Error parsing retention settings update: {err}")
         return
@@ -291,16 +280,16 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         clean_path = self.path.split('?')[0].rstrip('/')
         if clean_path.startswith('/api/recordings/'):
-            rec_id = clean_path.replace('/api/recordings/', '').strip()
-            deleted = delete_recording_by_id(rec_id)
+            snapshot_id = clean_path.replace('/api/recordings/', '').strip()
+            deleted = delete_snapshot_by_id(snapshot_id)
             if deleted:
                 self.send_response(200)
                 self.send_cors_headers()
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "deleted", "id": rec_id}).encode('utf-8'))
+                self.wfile.write(json.dumps({"status": "deleted", "id": snapshot_id}).encode('utf-8'))
             else:
-                self.send_error(404, "Recording not found")
+                self.send_error(404, "Snapshot not found")
             return
         self.send_error(404)
 
@@ -340,7 +329,7 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
         # 3. Recordings List API (/api/recordings)
         if clean_path == '/api/recordings':
             now = time.time()
-            query_retention = RECORDING_RETENTION_SECONDS
+            query_retention = SNAPSHOT_RETENTION_SECONDS
             if '?' in self.path:
                 try:
                     import urllib.parse
@@ -352,10 +341,10 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-            recordings_list = []
+            snapshots = []
             with recordings_lock:
-                for r_id, r in recordings_registry.items():
-                    created_iso = r.get('created_at') or r.get('timestamp_iso')
+                for snapshot_id, snapshot in recordings_registry.items():
+                    created_iso = snapshot.get('created_at')
                     try:
                         from datetime import datetime as _dt
                         created_epoch = _dt.fromisoformat(created_iso).timestamp() if created_iso else now
@@ -363,23 +352,21 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
                         created_epoch = now
                     age = now - created_epoch
                     remaining = max(0, int(query_retention - age))
-                    recordings_list.append({
-                        "id": r_id,
+                    snapshots.append({
+                        "id": snapshot_id,
                         "device_uid": DEVICE_UID,
-                        "filename": r.get('filename'),
-                        "video_url": f"/recordings/{r.get('filename')}",
-                        "thumbnail_url": f"/recordings/thumbnails/{r_id}.jpg",
+                        "filename": snapshot.get('filename'),
+                        "snapshot_url": f"/snapshots/{snapshot.get('filename')}",
                         "created_at": created_iso,
                         "timestamp": created_iso,
-                        "duration": r.get('duration', RECORDING_DURATION_SECONDS),
+                        "confidence": snapshot.get('confidence', 0),
                         "remaining_seconds": remaining,
                         "expires_in": remaining,
                         "retention_seconds": query_retention
                     })
 
-            # Sort latest first
-            recordings_list.sort(key=lambda x: x.get('remaining_seconds', 0), reverse=True)
-            res_data = json.dumps({"recordings": recordings_list, "retention_seconds": query_retention}).encode('utf-8')
+            snapshots.sort(key=lambda item: item.get('remaining_seconds', 0), reverse=True)
+            res_data = json.dumps({"recordings": snapshots, "retention_seconds": query_retention}).encode('utf-8')
             self.send_response(200)
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
@@ -390,6 +377,30 @@ class MJPEGRelayHandler(BaseHTTPRequestHandler):
             return
 
         # 4. Serve Video Thumbnail (/recordings/thumbnails/<filename>)
+        # 4. Serve a saved detection snapshot (/snapshots/<filename>)
+        if clean_path.startswith('/snapshots/'):
+            filename = os.path.basename(clean_path)
+            file_path = os.path.join(SNAPSHOTS_DIR, filename)
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'rb') as snapshot_file:
+                        data = snapshot_file.read()
+                    self.send_response(200)
+                    self.send_cors_headers()
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception as err:
+                    logger.error("Error serving snapshot %s: %s", filename, err)
+                    self.send_error(500)
+                    return
+            self.send_error(404, "Snapshot not found")
+            return
+
+        # 5. Serve legacy video thumbnails retained from earlier releases.
         if clean_path.startswith('/recordings/thumbnails/'):
             filename = os.path.basename(clean_path)
             file_path = os.path.join(THUMBNAILS_DIR, filename)
@@ -497,208 +508,112 @@ def start_relay_server():
 # ---------------------------------------------------------------------------
 # Video Recording & Storage Functions
 # ---------------------------------------------------------------------------
-def delete_recording_by_id(rec_id: str) -> bool:
-    """Manually deletes a recording by its ID."""
+def delete_snapshot_by_id(snapshot_id: str) -> bool:
+    """Delete one saved detection snapshot."""
     with recordings_lock:
-        rec = recordings_registry.pop(rec_id, None)
-    if not rec:
+        snapshot = recordings_registry.pop(snapshot_id, None)
+    if not snapshot:
         return False
     try:
-        if rec.get('video_path') and os.path.exists(rec['video_path']):
-            os.remove(rec['video_path'])
-        if rec.get('thumbnail_path') and os.path.exists(rec['thumbnail_path']):
-            os.remove(rec['thumbnail_path'])
-        logger.info(f"[Recordings] Manually deleted recording: {rec_id}")
+        snapshot_path = snapshot.get('snapshot_path')
+        if snapshot_path and os.path.exists(snapshot_path):
+            os.remove(snapshot_path)
+        logger.info("[Snapshots] Deleted snapshot %s", snapshot_id)
         return True
     except Exception as err:
-        logger.error(f"[Recordings] Error deleting recording {rec_id}: {err}")
+        logger.error("[Snapshots] Failed to delete %s: %s", snapshot_id, err)
         return False
 
 
-def record_video_worker(rec_id: str, trigger_frame, bbox: list, confidence: float, mqtt_client):
-    """
-    Asynchronously records a video clip upon person detection.
-    Saves pre-roll frames + live frames into an MP4 video file and saves a thumbnail image.
-    Registers metadata with auto-deletion timer.
-    """
-    global is_recording_active
-    is_recording_active = True
-    out = None
+def save_detection_snapshot_worker(snapshot_id: str, trigger_frame, bbox: list, confidence: float, timestamp: str, mqtt_client):
+    """Save one annotated JPEG and publish the person-detection alert."""
+    snapshot_url = None
+    filename = f"{snapshot_id}.jpg"
+    snapshot_path = os.path.join(SNAPSHOTS_DIR, filename)
 
     try:
-        timestamp_iso = datetime.now(timezone.utc).isoformat()
-        video_filename = f"{rec_id}.mp4"
-        thumb_filename = f"{rec_id}.jpg"
-        video_path = os.path.join(RECORDINGS_DIR, video_filename)
-        thumb_path = os.path.join(THUMBNAILS_DIR, thumb_filename)
-
-        # 1. Save clean Thumbnail with a simple timestamp in the corner only
-        thumb_img = trigger_frame.copy()
-        ts_label = datetime.now().strftime('%Y-%m-%d  %H:%M:%S')
-        # Shadow for readability
-        cv2.putText(thumb_img, ts_label, (11, thumb_img.shape[0] - 11),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
-        # White text on top
-        cv2.putText(thumb_img, ts_label, (10, thumb_img.shape[0] - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.imwrite(thumb_path, thumb_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-
-        # 2. Write pre-roll and live frames incrementally at reduced recording resolution.
-        with history_lock:
-            pre_roll_frames = list(frame_history)
-        if not pre_roll_frames:
-            pre_roll_frames = [trigger_frame]
-
-        fps = 15
-        frame_interval = 1.0 / fps
-        first_frame = pre_roll_frames[0]
-        frame_height, frame_width = first_frame.shape[:2]
-        resize_scale = min(1.0, 640 / frame_width)
-        output_size = (
-            max(2, int(frame_width * resize_scale) // 2 * 2),
-            max(2, int(frame_height * resize_scale) // 2 * 2),
+        snapshot = trigger_frame.copy()
+        x, y, width, height = bbox
+        cv2.rectangle(snapshot, (x, y), (x + width, y + height), (0, 255, 0), 2)
+        cv2.putText(
+            snapshot,
+            datetime.fromisoformat(timestamp).astimezone().strftime('%Y-%m-%d %H:%M:%S'),
+            (10, max(22, snapshot.shape[0] - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
         )
 
-        def prepare_recording_frame(frame):
-            if (frame.shape[1], frame.shape[0]) == output_size:
-                return frame
-            return cv2.resize(frame, output_size, interpolation=cv2.INTER_AREA)
+        if not cv2.imwrite(snapshot_path, snapshot, [cv2.IMWRITE_JPEG_QUALITY, 82]):
+            raise RuntimeError(f"Unable to write snapshot {snapshot_path}")
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(video_path, fourcc, fps, output_size)
-        if not out.isOpened():
-            out.release()
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            out = cv2.VideoWriter(video_path, fourcc, fps, output_size)
-        if not out.isOpened():
-            out.release()
-            raise RuntimeError(f"Unable to open video writer for {video_path}")
-
-        recorded_frame_count = 0
-        for recorded_frame in pre_roll_frames:
-            out.write(prepare_recording_frame(recorded_frame))
-            recorded_frame_count += 1
-        del pre_roll_frames
-
-        logger.info(f"[Recording] 🎥 Started recording video clip '{video_filename}' ({RECORDING_DURATION_SECONDS}s)...")
-
-        # 3. Sample and encode live frames as they arrive, avoiding a full-clip RAM buffer.
-        start_time = time.time()
-        next_frame_at = start_time
-        while (time.time() - start_time) < RECORDING_DURATION_SECONDS and running:
-            wait_time = next_frame_at - time.time()
-            if wait_time > 0:
-                time.sleep(wait_time)
-
-            with frame_cond:
-                frame = latest_cv_frame.copy() if latest_cv_frame is not None else None
-            if frame is not None:
-                out.write(prepare_recording_frame(frame))
-                recorded_frame_count += 1
-            next_frame_at += frame_interval
-
-        out.release()
-        out = None
-
-        created_at_iso = datetime.now(timezone.utc).isoformat()
-
-        # 5. Register in Recordings Registry
         with recordings_lock:
-            recordings_registry[rec_id] = {
-                'id': rec_id,
-                'filename': video_filename,
-                'video_path': video_path,
-                'thumbnail_path': thumb_path,
-                'created_at': created_at_iso,
-                'timestamp_iso': timestamp_iso,
-                'duration': RECORDING_DURATION_SECONDS,
+            recordings_registry[snapshot_id] = {
+                'id': snapshot_id,
+                'filename': filename,
+                'snapshot_path': snapshot_path,
+                'created_at': timestamp,
                 'confidence': confidence,
-                'device_uid': DEVICE_UID
+                'device_uid': DEVICE_UID,
             }
 
-        logger.info(
-            f"[Recording] ✅ Saved video clip '{video_filename}' ({recorded_frame_count} frames). "
-            f"Will auto-delete in {RECORDING_RETENTION_SECONDS} seconds."
-        )
-
-        # 6. Publish Video Metadata to MQTT
-        video_payload = {
-            "type": "video_recorded",
-            "camera": DEVICE_UID,
-            "recording_id": rec_id,
-            "filename": video_filename,
-            "video_url": f"/recordings/{video_filename}",
-            "thumbnail_url": f"/recordings/thumbnails/{thumb_filename}",
-            "timestamp": timestamp_iso,
-            "confidence": round(float(confidence), 2),
-            "duration": RECORDING_DURATION_SECONDS,
-            "retention_seconds": RECORDING_RETENTION_SECONDS,
-            "expires_in": RECORDING_RETENTION_SECONDS
-        }
-        video_json = json.dumps(video_payload)
-        mqtt_client.publish(TOPIC_PERSON_ALERT, video_json, qos=0)
-        if SCOPED_TOPIC_ALERT:
-            mqtt_client.publish(SCOPED_TOPIC_ALERT, video_json, qos=0)
-
+        snapshot_url = f"/snapshots/{filename}"
+        logger.info("[Snapshots] Saved detection snapshot '%s'", filename)
     except Exception as err:
-        logger.error(f"[Recording] Error during video capture: {err}")
-    finally:
-        if out is not None:
-            out.release()
-        is_recording_active = False
+        logger.error("[Snapshots] Failed to save detection snapshot: %s", err)
+
+    alert_payload = {
+        "type": "person_detected",
+        "camera": DEVICE_UID,
+        "confidence": round(float(confidence), 2),
+        "timestamp": timestamp,
+        "bbox": bbox,
+        "snapshot_id": snapshot_id,
+        "snapshot_url": snapshot_url,
+        "retention_seconds": SNAPSHOT_RETENTION_SECONDS,
+    }
+    alert_json = json.dumps(alert_payload)
+    mqtt_client.publish(TOPIC_PERSON_ALERT, alert_json, qos=0)
+    if SCOPED_TOPIC_ALERT:
+        mqtt_client.publish(SCOPED_TOPIC_ALERT, alert_json, qos=0)
 
 
 # ===========================================================================
 # ⏰ AUTO-DELETION CLEANUP WORKER THREAD
 # ===========================================================================
-def recording_cleanup_worker():
-    """
-    👉 AUTO-DELETION FEATURE:
-    Dedicated background worker thread that monitors recorded videos.
-    Automatically removes video files and thumbnails older than RECORDING_RETENTION_SECONDS (1 minute / 60s).
-    """
-    logger.info(
-        f"[Cleanup] 🧹 Auto-deletion thread started. "
-        f"Videos will automatically be deleted after {RECORDING_RETENTION_SECONDS} seconds."
-    )
+def snapshot_cleanup_worker():
+    """Delete expired detection snapshots in the background."""
+    logger.info("[Cleanup] Snapshot retention is %s seconds.", SNAPSHOT_RETENTION_SECONDS)
 
     while running:
-        time.sleep(2)  # Check every 2 seconds for expired clips
+        time.sleep(2)
         now = time.time()
-        expired_ids = []
+        expired_snapshots = []
 
         with recordings_lock:
-            for rec_id, rec in list(recordings_registry.items()):
-                created_at_val = rec.get('created_at', None)
+            for snapshot_id, snapshot in list(recordings_registry.items()):
+                created_at = snapshot.get('created_at')
                 try:
-                    # created_at is now an ISO string
-                    from datetime import datetime as _dt
-                    created_epoch = _dt.fromisoformat(created_at_val).timestamp() if created_at_val else now
+                    created_epoch = datetime.fromisoformat(created_at).timestamp() if created_at else now
                 except Exception:
                     created_epoch = now
-                age = now - created_epoch
-                if age >= RECORDING_RETENTION_SECONDS:
-                    expired_ids.append((rec_id, rec))
+                if now - created_epoch >= SNAPSHOT_RETENTION_SECONDS:
+                    expired_snapshots.append((snapshot_id, snapshot))
 
-        # Delete expired video and thumbnail files from disk
-        for rec_id, rec in expired_ids:
+        for snapshot_id, snapshot in expired_snapshots:
             try:
-                v_path = rec.get('video_path')
-                t_path = rec.get('thumbnail_path')
-                if v_path and os.path.exists(v_path):
-                    os.remove(v_path)
-                if t_path and os.path.exists(t_path):
-                    os.remove(t_path)
+                snapshot_path = snapshot.get('snapshot_path')
+                if snapshot_path and os.path.exists(snapshot_path):
+                    os.remove(snapshot_path)
                 with recordings_lock:
-                    recordings_registry.pop(rec_id, None)
-                logger.info(
-                    f"[Auto-Delete] 🗑️ Automatically deleted expired video: '{rec.get('filename')}' "
-                    f"(Age > {RECORDING_RETENTION_SECONDS}s)."
-                )
-            except Exception as e:
-                logger.error(f"[Auto-Delete] Failed to delete video {rec_id}: {e}")
+                    recordings_registry.pop(snapshot_id, None)
+                logger.info("[Auto-Delete] Removed expired snapshot %s", snapshot_id)
+            except Exception as err:
+                logger.error("[Auto-Delete] Failed to remove snapshot %s: %s", snapshot_id, err)
 
-    logger.info("[Cleanup] Auto-deletion thread stopped.")
+    logger.info("[Cleanup] Snapshot cleanup thread stopped.")
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +689,7 @@ def camera_capture_worker():
     """
     Dedicated thread that maintains ONE single persistent connection to the ESP32-CAM.
     Drains frames continuously to prevent lag and buffer buildup.
-    Updates in-memory latest_frame_bytes, latest_cv_frame, and frame_history ring buffer.
+    Updates in-memory latest_frame_bytes and latest_cv_frame.
     """
     global latest_frame_bytes, latest_cv_frame
 
@@ -815,10 +730,6 @@ def camera_capture_worker():
                     latest_frame_bytes = jpeg_bytes
                     latest_cv_frame = frame
                     frame_cond.notify_all()
-
-                # Add to ring buffer for video pre-roll
-                with history_lock:
-                    frame_history.append(frame.copy())
 
         cap.release()
 
@@ -884,31 +795,17 @@ def ai_detection_worker(mqtt_client):
             orig_box = [int(c / scale) for c in best_box]
 
             # Generate unique recording ID
-            rec_id = f"rec_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(time.time()*1000)%1000}"
-
-            alert_payload = {
-                "camera": DEVICE_UID,
-                "confidence": round(float(best_weight), 2),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "bbox": orig_box,
-                "recording_id": rec_id,
-                "retention_seconds": RECORDING_RETENTION_SECONDS
-            }
-            alert_json = json.dumps(alert_payload)
-            mqtt_client.publish(TOPIC_PERSON_ALERT, alert_json, qos=0)
-            if SCOPED_TOPIC_ALERT:
-                mqtt_client.publish(SCOPED_TOPIC_ALERT, alert_json, qos=0)
+            snapshot_id = f"snap_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{int(time.time()*1000)%1000}"
+            timestamp = datetime.now(timezone.utc).isoformat()
             logger.info(f"[Detection] 🚨 ALERT: Person detected on {DEVICE_UID}! Confidence: {best_weight:.2f}")
             last_alert_time = now
 
-            # 🎬 Trigger automatic video recording thread
-            if not is_recording_active:
-                rec_thread = threading.Thread(
-                    target=record_video_worker,
-                    args=(rec_id, frame, orig_box, best_weight, mqtt_client),
-                    daemon=True
-                )
-                rec_thread.start()
+            snapshot_thread = threading.Thread(
+                target=save_detection_snapshot_worker,
+                args=(snapshot_id, frame, orig_box, best_weight, timestamp, mqtt_client),
+                daemon=True,
+            )
+            snapshot_thread.start()
 
         # Run detection at ~5 FPS to keep CPU cool while video streams at 15-20 FPS
         time.sleep(0.2)
@@ -921,8 +818,8 @@ def ai_detection_worker(mqtt_client):
 # ---------------------------------------------------------------------------
 def main():
     logger.info("=" * 55)
-    logger.info(" SecureHome AI Processor & Video Recording Service")
-    logger.info(f" ⏱️ Video Retention Duration: {RECORDING_RETENTION_SECONDS} seconds (1 minute auto-delete)")
+    logger.info(" SecureHome AI Processor & Person Snapshot Service")
+    logger.info("Snapshot retention: %s seconds", SNAPSHOT_RETENTION_SECONDS)
     logger.info("=" * 55)
 
     # 1. MQTT Client -- HiveMQ Cloud (TLS + auth)
@@ -959,7 +856,7 @@ def main():
     detection_thread.start()
 
     # 6. Start Automatic Video Deletion Cleanup Thread (1-minute auto-delete)
-    cleanup_thread = threading.Thread(target=recording_cleanup_worker, daemon=True)
+    cleanup_thread = threading.Thread(target=snapshot_cleanup_worker, daemon=True)
     cleanup_thread.start()
 
     logger.info("AI Processor running. Stream, Detection & 1-Minute Video Retention active. Press Ctrl+C to stop.")

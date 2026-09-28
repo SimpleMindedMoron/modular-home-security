@@ -19,6 +19,7 @@ __pycache__/
 venv/
 .venv/
 recordings/
+snapshots/
 
 # Microcontroller build artifacts
 *.bin

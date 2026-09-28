@@ -1,21 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Video,
-  Play,
-  Trash2,
-  Clock,
-  Download,
-  X,
-  Film,
-  RefreshCw,
-} from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Image as ImageIcon, Trash2, Clock, Download, X, RefreshCw } from 'lucide-react';
 import { getMqttClient } from '../lib/mqttClient';
 
-// =============================================================================
-// 🎯 AUTO-DELETE DURATION CONFIGURATION & PRESETS (FRONTEND DASHBOARD)
-// =============================================================================
 export interface RetentionOption {
   label: string;
   valueSeconds: number;
@@ -23,53 +11,28 @@ export interface RetentionOption {
 
 export const RETENTION_OPTIONS: RetentionOption[] = [
   { label: '1 min (Testing)', valueSeconds: 60 },
-  { label: '30 days', valueSeconds: 30 * 24 * 60 * 60 }, // 2,592,000s
-  { label: '45 days', valueSeconds: 45 * 24 * 60 * 60 }, // 3,888,000s
-  { label: '60 days', valueSeconds: 60 * 24 * 60 * 60 }, // 5,184,000s
+  { label: '30 days', valueSeconds: 30 * 24 * 60 * 60 },
+  { label: '45 days', valueSeconds: 45 * 24 * 60 * 60 },
+  { label: '60 days', valueSeconds: 60 * 24 * 60 * 60 },
 ];
 
-export const DEFAULT_RETENTION_SECONDS = 60; // Default: 1 minute
+export const DEFAULT_RETENTION_SECONDS = 60;
 
-export const formatRemainingTime = (seconds: number): string => {
-  if (seconds <= 0) return '0s';
+export const getRetentionLabel = (seconds: number) => {
   if (seconds < 60) return `${seconds}s`;
-
-  const minutes = Math.floor(seconds / 60);
-  const remSec = seconds % 60;
-  if (minutes < 60) {
-    return remSec > 0 ? `${minutes}m ${remSec}s` : `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remMin = minutes % 60;
-  if (hours < 24) {
-    return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
-  }
-
-  const days = Math.floor(hours / 24);
-  const remHours = hours % 24;
-  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
 };
 
-export const getRetentionLabel = (seconds: number): string => {
-  const match = RETENTION_OPTIONS.find((opt) => opt.valueSeconds === seconds);
-  if (match) return match.label;
-  if (seconds >= 86400) return `${Math.round(seconds / 86400)} days`;
-  if (seconds >= 60) return `${Math.round(seconds / 60)} mins`;
-  return `${seconds}s`;
-};
-
-export interface RecordedVideoItem {
+interface DetectionSnapshot {
   id: string;
   deviceId: string;
-  cameraName: string;
   filename: string;
-  videoUrl: string;
-  thumbnailUrl?: string;
+  snapshotUrl: string;
   timestamp: string;
-  createdAt: number; // epoch ms
+  createdAt: number;
   confidence: number;
-  duration: number; // seconds
 }
 
 interface RecordedVideosProps {
@@ -79,419 +42,200 @@ interface RecordedVideosProps {
   topicPrefix?: string;
 }
 
+const resolveSnapshotUrl = (url: string, relayUrl: string) => {
+  if (/^https?:\/\//i.test(url)) return url;
+  const path = url.startsWith('/') ? url : `/${url}`;
+  const savedRelay = typeof window === 'undefined'
+    ? ''
+    : localStorage.getItem('securehome_camera_relay_url') || '';
+  try {
+    return new URL(path, relayUrl || savedRelay).toString();
+  } catch {
+    return path;
+  }
+};
+
 export const RecordedVideos: React.FC<RecordedVideosProps> = ({
   deviceId = 'ESP32_CAM_01',
   deviceName = 'Front Entrance Camera',
   relayUrl = '',
   topicPrefix,
 }) => {
-  const [recordings, setRecordings] = useState<RecordedVideoItem[]>([]);
-  const [selectedVideo, setSelectedVideo] = useState<RecordedVideoItem | null>(null);
-  const [now, setNow] = useState<number>(Date.now());
-
-  // User-selected retention duration (persisted in localStorage)
-  const [retentionSeconds, setRetentionSeconds] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('securehome_retention_duration');
-      if (saved && !isNaN(Number(saved))) {
-        return Number(saved);
-      }
-    }
-    return DEFAULT_RETENTION_SECONDS;
+  const [snapshots, setSnapshots] = useState<DetectionSnapshot[]>([]);
+  const [selected, setSelected] = useState<DetectionSnapshot | null>(null);
+  const [retentionSeconds, setRetentionSeconds] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_RETENTION_SECONDS;
+    return Number(localStorage.getItem('securehome_retention_duration')) || DEFAULT_RETENTION_SECONDS;
   });
 
-  // Handle dropdown selection change
-  const handleRetentionChange = (newDurationSeconds: number) => {
-    setRetentionSeconds(newDurationSeconds);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('securehome_retention_duration', String(newDurationSeconds));
-    }
-
-    // Broadcast retention setting change via MQTT to backend
+  const fetchSnapshots = useCallback(async () => {
     try {
-      const client = getMqttClient();
-      if (client && client.connected) {
-        const payload = JSON.stringify({
-          retention_seconds: newDurationSeconds,
-          device_uid: deviceId,
-          timestamp: new Date().toISOString(),
-        });
-        client.publish('security/camera/settings/retention', payload, { qos: 1, retain: true });
-        if (topicPrefix) {
-          client.publish(`${topicPrefix}/settings/retention`, payload, { qos: 1, retain: true });
-        }
-      }
-    } catch (err) {
-      console.error('Failed to publish retention duration update:', err);
-    }
-  };
+      const response = await fetch(
+        `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&retention_seconds=${retentionSeconds}`
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!Array.isArray(data.snapshots)) return;
 
-  // 1. Ticker for live auto-deletion countdown (runs every 1 second)
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const currentNow = Date.now();
-      setNow(currentNow);
-
-      // =======================================================================
-      // 👉 AUTO-DELETION FRONTEND PURGE LOGIC
-      // Automatically removes any recording whose age has exceeded
-      // the currently selected retentionSeconds (e.g. 1 min, 30d, 45d, 60d).
-      // =======================================================================
-      setRecordings((prev) => {
-        const remaining = prev.filter((item) => {
-          const ageSeconds = (currentNow - item.createdAt) / 1000;
-          return ageSeconds < retentionSeconds;
-        });
-
-        // If an item was purged and it's currently open in modal, close modal
-        if (selectedVideo) {
-          const stillExists = remaining.some((r) => r.id === selectedVideo.id);
-          if (!stillExists) {
-            setSelectedVideo(null);
-          }
-        }
-
-        return remaining;
+      const loaded: DetectionSnapshot[] = data.snapshots.map((snapshot: any) => ({
+        id: snapshot.id,
+        deviceId: snapshot.device_uid || deviceId,
+        filename: snapshot.filename || `${snapshot.id}.jpg`,
+        snapshotUrl: resolveSnapshotUrl(snapshot.snapshot_url || '', relayUrl),
+        timestamp: snapshot.timestamp || new Date().toISOString(),
+        createdAt: snapshot.created_at ? new Date(snapshot.created_at).getTime() : Date.now(),
+        confidence: snapshot.confidence || 0,
+      }));
+      setSnapshots((previous) => {
+        const unique = new Map<string, DetectionSnapshot>();
+        [...loaded, ...previous].forEach((snapshot) => unique.set(snapshot.id, snapshot));
+        return Array.from(unique.values()).sort((a, b) => b.createdAt - a.createdAt);
       });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [selectedVideo, retentionSeconds]);
-
-  // 2. Fetch initial recordings from backend / AI processor API
-  const fetchRecordings = useCallback(async () => {
-    try {
-      const url = `/api/recordings?device_uid=${encodeURIComponent(deviceId)}&retention_seconds=${retentionSeconds}`;
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-
-      if (Array.isArray(data.recordings)) {
-        const mapped: RecordedVideoItem[] = data.recordings.map((r: any) => ({
-          id: r.id,
-          deviceId: r.device_uid || deviceId,
-          cameraName: deviceName,
-          filename: r.filename || `${r.id}.mp4`,
-          videoUrl: r.video_url,
-          thumbnailUrl: r.thumbnail_url,
-          timestamp: r.timestamp || new Date().toLocaleTimeString(),
-          createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-          confidence: r.confidence || 0.95,
-          duration: r.duration || 10,
-        }));
-
-        setRecordings((prev) => {
-          // Merge deduplicated
-          const map = new Map<string, RecordedVideoItem>();
-          [...mapped, ...prev].forEach((item) => {
-            const ageSec = (Date.now() - item.createdAt) / 1000;
-            if (ageSec < retentionSeconds) {
-              map.set(item.id, item);
-            }
-          });
-          return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
-        });
-      }
-    } catch (err) {
-      // Backend api optional in offline mode
+    } catch {
+      // The processor API may be unreachable when the dashboard is hosted remotely.
     }
-  }, [deviceId, deviceName, relayUrl, retentionSeconds]);
+  }, [deviceId, relayUrl, retentionSeconds]);
 
   useEffect(() => {
-    fetchRecordings();
-    const interval = setInterval(fetchRecordings, 10000);
-    return () => clearInterval(interval);
-  }, [fetchRecordings]);
+    void fetchSnapshots();
+    const refreshTimer = setInterval(() => void fetchSnapshots(), 10000);
+    const expiryTimer = setInterval(() => {
+      const cutoff = Date.now() - retentionSeconds * 1000;
+      setSnapshots((previous) => previous.filter((snapshot) => snapshot.createdAt > cutoff));
+      setSelected((current) => current && current.createdAt > cutoff ? current : null);
+    }, 1000);
+    return () => {
+      clearInterval(refreshTimer);
+      clearInterval(expiryTimer);
+    };
+  }, [fetchSnapshots, retentionSeconds]);
 
-  // 3. MQTT Person Alert Listener -> Automatically add new video recording
   useEffect(() => {
     const client = getMqttClient();
-
-    const onConnect = () => {
+    const subscribe = () => {
       client.subscribe('security/alerts/person');
-      if (topicPrefix) {
-        client.subscribe(`${topicPrefix}/alerts/person`);
-      }
+      if (topicPrefix) client.subscribe(`${topicPrefix}/alerts/person`);
     };
-
     const onMessage = (topic: string, message: Buffer) => {
-      if (topic === 'security/alerts/person' || topic.endsWith('/alerts/person')) {
-        try {
-          const payload = JSON.parse(message.toString());
-          const targetCam = payload.camera || deviceId;
-
-          // If this alert belongs to current camera or wildcard
-          if (!payload.camera || payload.camera === deviceId || payload.camera === 'cam_front_door' || payload.camera === 'ESP32_CAM_01') {
-            const recId = payload.recording_id || `rec_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-            const timeStr = payload.timestamp
-              ? new Date(payload.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-              : new Date().toLocaleTimeString();
-
-            const savedRelay = typeof window !== 'undefined' ? localStorage.getItem('securehome_camera_relay_url') : '';
-            const validRelay = relayUrl.startsWith('https://')
-              ? relayUrl
-              : (savedRelay?.startsWith('https://') ? savedRelay : '');
-            const baseRelay = validRelay ? validRelay.replace(/\/+$/, '') : '';
-            const resolveMediaUrl = (url?: string) => {
-              if (!url) return '';
-              if (url.startsWith('http://') || url.startsWith('https://')) return url;
-              const path = url.startsWith('/') ? url : `/${url}`;
-              return baseRelay ? `${baseRelay}${path}` : path;
-            };
-            const videoUrl = resolveMediaUrl(payload.video_url);
-            const thumbnailUrl = resolveMediaUrl(payload.thumbnail_url);
-
-            const newClip: RecordedVideoItem = {
-              id: recId,
-              deviceId: targetCam,
-              cameraName: deviceName,
-              filename: payload.filename || `${recId}.mp4`,
-              videoUrl: videoUrl,
-              thumbnailUrl: thumbnailUrl,
-              timestamp: timeStr,
-              createdAt: Date.now(),
-              confidence: payload.confidence || 0.94,
-              duration: payload.duration || 10,
-            };
-
-            setRecordings((prev) => {
-              // Avoid duplicates
-              if (prev.some((r) => r.id === recId)) return prev;
-              return [newClip, ...prev];
-            });
-          }
-        } catch (e) {
-          console.error('[MQTT] Error parsing person alert for recording:', e);
-        }
+      if (topic !== 'security/alerts/person' && !topic.endsWith('/alerts/person')) return;
+      try {
+        const payload = JSON.parse(message.toString());
+        if (!payload.snapshot_url) return;
+        if (payload.camera && payload.camera !== deviceId && payload.camera !== 'cam_front_door') return;
+        const id = payload.snapshot_id || `snap_${Date.now()}`;
+        const snapshot: DetectionSnapshot = {
+          id,
+          deviceId: payload.camera || deviceId,
+          filename: payload.snapshot_url.split('/').pop() || `${id}.jpg`,
+          snapshotUrl: resolveSnapshotUrl(payload.snapshot_url, relayUrl),
+          timestamp: payload.timestamp || new Date().toISOString(),
+          createdAt: Date.now(),
+          confidence: payload.confidence || 0,
+        };
+        setSnapshots((previous) => previous.some((item) => item.id === id) ? previous : [snapshot, ...previous]);
+      } catch {
+        // Ignore malformed MQTT payloads.
       }
     };
 
-    if (client.connected) {
-      onConnect();
-    }
-    client.on('connect', onConnect);
+    if (client.connected) subscribe();
+    client.on('connect', subscribe);
     client.on('message', onMessage);
-
     return () => {
+      client.off('connect', subscribe);
       client.off('message', onMessage);
     };
-  }, [deviceId, deviceName, relayUrl, topicPrefix]);
+  }, [deviceId, relayUrl, topicPrefix]);
 
-  // 4. Manual delete handler
-  const handleDelete = async (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+  const updateRetention = (value: number) => {
+    setRetentionSeconds(value);
+    localStorage.setItem('securehome_retention_duration', String(value));
+    const client = getMqttClient();
+    if (!client.connected) return;
+    const payload = JSON.stringify({ retention_seconds: value, device_uid: deviceId });
+    client.publish('security/camera/settings/retention', payload, { qos: 1, retain: true });
+    if (topicPrefix) client.publish(`${topicPrefix}/settings/retention`, payload, { qos: 1, retain: true });
+  };
 
-    setRecordings((prev) => prev.filter((r) => r.id !== id));
-    if (selectedVideo?.id === id) {
-      setSelectedVideo(null);
-    }
-
+  const deleteSnapshot = async (id: string) => {
+    setSnapshots((previous) => previous.filter((snapshot) => snapshot.id !== id));
+    setSelected(null);
     try {
       await fetch(`/api/recordings?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
     } catch {
-      // ignore
+      // The snapshot may already have expired or the processor may be offline.
     }
   };
 
-
   return (
-    <section className="recorded-videos-section" aria-label="Detection Video Recordings">
-      {/* Section Header */}
-      <div className="recorded-videos-header">
+    <section className="recorded-videos-section" aria-label="Person detection snapshots">
+      <header className="recorded-videos-header">
         <div className="recorded-videos-title">
-          <div className="record-pulse-badge">
-            <Film size={14} />
-          </div>
+          <div className="record-pulse-badge"><ImageIcon size={14} /></div>
           <div>
-            <h4>Detection Recordings</h4>
-            <span className="recorded-videos-subtitle">
-              Auto-saved clips on person detection &bull;{' '}
-              <strong className="retention-highlight">
-                Retention: {getRetentionLabel(retentionSeconds)}
-              </strong>
-            </span>
+            <h4>Person snapshots</h4>
+            <span className="recorded-videos-subtitle">Auto-saved photos on detection</span>
           </div>
         </div>
-
         <div className="recorded-videos-controls">
-          {/* 🎯 Retention Duration Dropdown Selector */}
-          <div className="retention-dropdown-wrapper" title="Change how long recorded clips are kept before auto-deletion">
-            <label htmlFor={`retention-select-${deviceId}`} className="retention-select-label">
-              <Clock size={12} />
-              <span>Auto-Delete:</span>
-            </label>
-            <select
-              id={`retention-select-${deviceId}`}
-              value={retentionSeconds}
-              onChange={(e) => handleRetentionChange(Number(e.target.value))}
-              className="retention-select-input"
-            >
-              {RETENTION_OPTIONS.map((opt) => (
-                <option key={opt.valueSeconds} value={opt.valueSeconds}>
-                  {opt.label}
-                </option>
+          <label className="retention-dropdown-wrapper" title="Snapshot auto-delete time">
+            <Clock size={12} />
+            <span>Auto-delete</span>
+            <select value={retentionSeconds} onChange={(event) => updateRetention(Number(event.target.value))}>
+              {RETENTION_OPTIONS.map((option) => (
+                <option key={option.valueSeconds} value={option.valueSeconds}>{option.label}</option>
               ))}
             </select>
-          </div>
-
-          <button
-            type="button"
-            className="btn-icon btn-refresh-recordings"
-            onClick={fetchRecordings}
-            title="Refresh recordings list"
-          >
+          </label>
+          <button type="button" className="btn-icon btn-refresh-recordings" onClick={() => void fetchSnapshots()} title="Refresh snapshots">
             <RefreshCw size={13} />
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Recordings Grid / List */}
-      {recordings.length > 0 ? (
+      {snapshots.length ? (
         <div className="recordings-grid">
-          {recordings.map((clip) => {
-            const ageSeconds = Math.floor((now - clip.createdAt) / 1000);
-            const remainingSeconds = Math.max(0, retentionSeconds - ageSeconds);
-            const isUrgent = remainingSeconds <= Math.min(15, retentionSeconds * 0.25);
-
-            return (
-              <div
-                key={clip.id}
-                className={`recording-card ${isUrgent ? 'recording-card--urgent' : ''}`}
-                onClick={() => setSelectedVideo(clip)}
-              >
-                {/* Thumbnail Preview Area */}
-                <div className="recording-thumb-wrapper">
-                  {clip.thumbnailUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={clip.thumbnailUrl}
-                      alt={`Detection preview at ${clip.timestamp}`}
-                      className="recording-thumb-img"
-                    />
-                  ) : (
-                    <div className="recording-thumb-placeholder">
-                      <Film size={22} />
-                      <span>No preview</span>
-                    </div>
-                  )}
-
-                  {/* Play Overlay Button */}
-                  <div className="recording-play-overlay">
-                    <div className="play-circle-btn">
-                      <Play size={14} fill="currentColor" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card Content & Expiration Bar */}
-                <div className="recording-card-body">
-                  <div className="recording-meta-row">
-                    <span className="recording-timestamp">
-                      <Clock size={11} />
-                      {clip.timestamp}
-                    </span>
-                    <button
-                      type="button"
-                      className="recording-delete-btn"
-                      onClick={(e) => handleDelete(clip.id, e)}
-                      title="Delete recording"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
+          {snapshots.map((snapshot) => (
+            <article key={snapshot.id} className="recording-card" onClick={() => setSelected(snapshot)}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="recording-thumb-img" src={snapshot.snapshotUrl} alt={`Person detected at ${new Date(snapshot.timestamp).toLocaleString()}`} />
+              <div className="recording-card-body">
+                <span className="recording-timestamp"><Clock size={11} /> {new Date(snapshot.timestamp).toLocaleString()}</span>
+                <button type="button" className="recording-delete-btn" title="Delete snapshot" onClick={(event) => { event.stopPropagation(); void deleteSnapshot(snapshot.id); }}>
+                  <Trash2 size={12} />
+                </button>
               </div>
-            );
-          })}
+            </article>
+          ))}
         </div>
       ) : (
         <div className="no-recordings-box">
-          <Film size={24} className="no-rec-icon" />
-          <p className="no-rec-text">No recorded video clips currently stored.</p>
-          <span className="no-rec-hint">
-            When a person is detected by AI, a video clip will automatically appear here and auto-delete after {getRetentionLabel(retentionSeconds)}.
-          </span>
+          <ImageIcon size={24} className="no-rec-icon" />
+          <p className="no-rec-text">No detection snapshots stored.</p>
+          <span className="no-rec-hint">A photo will appear here when a person is detected.</span>
         </div>
       )}
 
-      {/* =====================================================================
-          🎬 Full-Featured Video Player Modal
-          ===================================================================== */}
-      {selectedVideo && (
-        <div className="video-modal-backdrop" onClick={() => setSelectedVideo(null)}>
-          <div
-            className="video-modal-content"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-          >
-            {/* Modal Header */}
-            <div className="video-modal-header">
+      {selected && (
+        <div className="video-modal-backdrop" onClick={() => setSelected(null)}>
+          <div className="video-modal-content" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <header className="video-modal-header">
               <div className="video-modal-title">
-                <div className="video-modal-icon">
-                  <Video size={16} />
-                </div>
-                <div>
-                  <h3>Recording — {selectedVideo.cameraName}</h3>
-                  <span className="video-modal-meta">
-                    {selectedVideo.timestamp}
-                  </span>
-                </div>
+                <ImageIcon size={16} />
+                <div><h3>Detection — {deviceName}</h3><span className="video-modal-meta">{new Date(selected.timestamp).toLocaleString()}</span></div>
               </div>
-              <button
-                type="button"
-                className="btn-modal-close"
-                onClick={() => setSelectedVideo(null)}
-                aria-label="Close video player"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Video Player Display */}
+              <button type="button" className="btn-modal-close" aria-label="Close snapshot" onClick={() => setSelected(null)}><X size={18} /></button>
+            </header>
             <div className="video-modal-player-wrap">
-              {selectedVideo.videoUrl ? (
-                <video
-                  src={selectedVideo.videoUrl}
-                  controls
-                  autoPlay
-                  playsInline
-                  className="modal-html5-video"
-                  poster={selectedVideo.thumbnailUrl}
-                >
-                  Your browser does not support HTML5 video playback.
-                </video>
-              ) : (
-                <div className="recording-thumb-placeholder" style={{ minHeight: 200 }}>
-                  <Film size={32} />
-                  <span>Video not available</span>
-                </div>
-              )}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="modal-html5-video" src={selected.snapshotUrl} alt={`Person detected at ${new Date(selected.timestamp).toLocaleString()}`} />
             </div>
-
-            {/* Modal Footer with Live Retention Timer & Actions */}
-            <div className="video-modal-footer">
+            <footer className="video-modal-footer">
               <div className="modal-actions-right">
-                {selectedVideo.videoUrl && (
-                  <a
-                    href={selectedVideo.videoUrl}
-                    download={selectedVideo.filename}
-                    className="btn-secondary btn-download-clip"
-                  >
-                    <Download size={13} />
-                    <span>Download</span>
-                  </a>
-                )}
-                <button
-                  type="button"
-                  className="btn-secondary btn-delete-clip"
-                  onClick={() => handleDelete(selectedVideo.id)}
-                >
-                  <Trash2 size={13} />
-                  <span>Delete</span>
-                </button>
+                <a className="btn-secondary btn-download-clip" href={selected.snapshotUrl} download={selected.filename}><Download size={13} /> Download photo</a>
+                <button type="button" className="btn-secondary btn-delete-clip" onClick={() => void deleteSnapshot(selected.id)}><Trash2 size={13} /> Delete photo</button>
               </div>
-            </div>
+            </footer>
           </div>
         </div>
       )}

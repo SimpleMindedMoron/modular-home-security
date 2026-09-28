@@ -11,6 +11,10 @@ const nextConfig = {
         source: '/recordings/:path*',
         destination: `${aiProcessorUrl}/recordings/:path*`,
       },
+      {
+        source: '/snapshots/:path*',
+        destination: `${aiProcessorUrl}/snapshots/:path*`,
+      },
     ];
   },
 };

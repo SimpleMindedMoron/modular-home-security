@@ -1,158 +1,98 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// In-memory fallback cache of recordings for the dashboard web server
-interface StoredRecording {
+interface StoredSnapshot {
   id: string;
   device_uid: string;
   camera_name?: string;
   filename: string;
-  video_url: string;
-  thumbnail_url?: string;
+  snapshot_url: string;
   timestamp: string;
   created_at: number;
-  duration: number;
   confidence: number;
 }
 
-let memoryRecordings: StoredRecording[] = [];
-
-// =============================================================================
-// 🎯 AUTO-DELETE DURATION CONFIGURATION (API ROUTE)
-// Change this value to adjust the retention time (in seconds).
-// Default: 60 seconds (1 minute).
-// =============================================================================
-const API_RECORDING_RETENTION_SECONDS = 60;
+let memorySnapshots: StoredSnapshot[] = [];
+const DEFAULT_RETENTION_SECONDS = 60;
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const deviceUid = searchParams.get('device_uid');
-  // Always talk to the local AI processor directly — the relay_url is only for the MJPEG stream
   const aiProcessorUrl = process.env.AI_PROCESSOR_URL || 'http://127.0.0.1:8765';
-  const customRetention = searchParams.get('retention_seconds');
-  const activeRetention = customRetention && !isNaN(Number(customRetention))
-    ? Number(customRetention)
-    : API_RECORDING_RETENTION_SECONDS;
-
+  const requestedRetention = Number(searchParams.get('retention_seconds'));
+  const retentionSeconds = Number.isFinite(requestedRetention) && requestedRetention > 0
+    ? requestedRetention
+    : DEFAULT_RETENTION_SECONDS;
   const now = Date.now();
 
-  // 1. Auto-clean expired items based on active retention duration
-  memoryRecordings = memoryRecordings.filter((rec) => {
-    const ageSeconds = (now - rec.created_at) / 1000;
-    return ageSeconds < activeRetention;
-  });
+  memorySnapshots = memorySnapshots.filter(
+    (snapshot) => (now - snapshot.created_at) / 1000 < retentionSeconds
+  );
 
-  // 2. Try proxying to AI processor if running locally or via relay
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
-
-    const res = await fetch(`${aiProcessorUrl}/api/recordings?retention_seconds=${activeRetention}`, {
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
+    const response = await fetch(
+      `${aiProcessorUrl}/api/recordings?retention_seconds=${retentionSeconds}`,
+      { signal: AbortSignal.timeout(1200), cache: 'no-store' }
+    );
+    if (response.ok) {
+      const data = await response.json();
       if (Array.isArray(data.recordings)) {
-        // Merge remote AI processor recordings with memory items
-        const remoteList = data.recordings.map((r: any) => ({
-          ...r,
-          video_url: r.video_url.startsWith('http') ? r.video_url : (r.video_url.startsWith('/') ? r.video_url : `/${r.video_url}`),
-          thumbnail_url: r.thumbnail_url?.startsWith('http')
-            ? r.thumbnail_url
-            : r.thumbnail_url
-            ? (r.thumbnail_url.startsWith('/') ? r.thumbnail_url : `/${r.thumbnail_url}`)
-            : '',
-          created_at: r.created_at ? new Date(r.created_at).getTime() : now,
+        const snapshots = data.recordings.map((snapshot: StoredSnapshot) => ({
+          ...snapshot,
+          snapshot_url: snapshot.snapshot_url?.startsWith('/')
+            ? snapshot.snapshot_url
+            : `/${snapshot.snapshot_url || ''}`,
+          created_at: snapshot.created_at ? new Date(snapshot.created_at).getTime() : now,
         }));
-        return NextResponse.json({
-          recordings: remoteList,
-          retention_seconds: activeRetention,
-          source: 'ai_processor',
-        });
+        return NextResponse.json({ snapshots, retention_seconds: retentionSeconds });
       }
     }
-  } catch (err) {
-    // AI processor not reachable, fallback to memory recordings
+  } catch {
+    // The processor may not be reachable from the dashboard server.
   }
 
-  // Filter by device if requested
   const list = deviceUid
-    ? memoryRecordings.filter((r) => r.device_uid === deviceUid)
-    : memoryRecordings;
-
-  const recordingsWithRemaining = list.map((rec) => {
-    const ageSeconds = (now - rec.created_at) / 1000;
-    const remaining = Math.max(0, Math.ceil(activeRetention - ageSeconds));
-    return {
-      ...rec,
-      remaining_seconds: remaining,
-      expires_in: remaining,
-      retention_seconds: activeRetention,
-    };
+    ? memorySnapshots.filter((snapshot) => snapshot.device_uid === deviceUid)
+    : memorySnapshots;
+  const snapshots = list.map((snapshot) => {
+    const remaining = Math.max(0, Math.ceil(retentionSeconds - (now - snapshot.created_at) / 1000));
+    return { ...snapshot, remaining_seconds: remaining, expires_in: remaining, retention_seconds: retentionSeconds };
   });
 
-  return NextResponse.json({
-    recordings: recordingsWithRemaining,
-    retention_seconds: activeRetention,
-    source: 'dashboard_memory',
-  });
+  return NextResponse.json({ snapshots, retention_seconds: retentionSeconds, source: 'dashboard_memory' });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const now = Date.now();
-
-    const newRecording: StoredRecording = {
-      id: body.id || `rec_${Date.now()}`,
+    const snapshot: StoredSnapshot = {
+      id: body.id || `snap_${now}`,
       device_uid: body.device_uid || body.camera || 'ESP32_CAM_01',
       camera_name: body.camera_name || 'Front Entrance Camera',
-      filename: body.filename || `rec_${Date.now()}.mp4`,
-      video_url: body.video_url || '',
-      thumbnail_url: body.thumbnail_url || '',
-      timestamp: body.timestamp || new Date().toISOString(),
+      filename: body.filename || `snap_${now}.jpg`,
+      snapshot_url: body.snapshot_url || '',
+      timestamp: body.timestamp || new Date(now).toISOString(),
       created_at: body.created_at || now,
-      duration: body.duration || 10,
       confidence: body.confidence || 0.95,
     };
-
-    memoryRecordings.unshift(newRecording);
-
-    // Keep max 20 latest
-    if (memoryRecordings.length > 20) {
-      memoryRecordings = memoryRecordings.slice(0, 20);
-    }
-
-    return NextResponse.json({
-      success: true,
-      recording: newRecording,
-      retention_seconds: API_RECORDING_RETENTION_SECONDS,
-    });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    memorySnapshots.unshift(snapshot);
+    memorySnapshots = memorySnapshots.slice(0, 20);
+    return NextResponse.json({ success: true, snapshot, retention_seconds: DEFAULT_RETENTION_SECONDS });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
+  const id = new URL(request.url).searchParams.get('id');
+  if (!id) return NextResponse.json({ error: 'Missing id parameter' }, { status: 400 });
 
-  if (!id) {
-    return NextResponse.json({ error: 'Missing id parameter' }, { status: 400 });
-  }
-
-  memoryRecordings = memoryRecordings.filter((rec) => rec.id !== id);
-
-  // Also notify local AI processor if reachable to delete file on disk
+  memorySnapshots = memorySnapshots.filter((snapshot) => snapshot.id !== id);
   const aiProcessorUrl = process.env.AI_PROCESSOR_URL || 'http://127.0.0.1:8765';
   try {
-    await fetch(`${aiProcessorUrl}/api/recordings/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
+    await fetch(`${aiProcessorUrl}/api/recordings/${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch {
-    // AI processor offline or unreachable
+    // Processor offline or unreachable.
   }
 
   return NextResponse.json({ success: true, deleted_id: id });
