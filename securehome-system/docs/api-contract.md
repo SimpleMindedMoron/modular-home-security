@@ -24,6 +24,12 @@ This document defines the strict API contract for communication between all syst
 | `users/<token>/doors/<uid>/command` | `security/door/command` | Web Dashboard | Access Node | String (`"OPEN"` / `"CLOSE"`) | No | 1 | Remote lock/unlock command. |
 | `users/<token>/doors/<uid>/status` | `security/door/status` | Access Node | Web Dashboard | String (`"LOCKED"` / `"UNLOCKED"`) | **Yes** | 1 | Physical lock state. |
 | `users/<token>/doors/<uid>/access_log` | `security/door/access_log` | Access Node | Web Dashboard | JSON Object | No | 1 | RFID/PIN authentication audit log. |
+| `users/<token>/doors/<uid>/enroll/request` | `security/door/enroll/request` | Web Dashboard | Access Node | JSON Object | No | 1 | Request scan mode or registered card list. |
+| `users/<token>/doors/<uid>/enroll/scan` | `security/door/enroll/scan` | Access Node | Web Dashboard | JSON Object | No | 1 | Broadcast scanned card UID during enroll mode. |
+| `users/<token>/doors/<uid>/enroll/confirm` | `security/door/enroll/confirm` | Web Dashboard | Access Node | JSON Object | No | 1 | Confirm card label and persist to NVS flash. |
+| `users/<token>/doors/<uid>/enroll/delete` | `security/door/enroll/delete` | Web Dashboard | Access Node | JSON Object | No | 1 | Delete card from NVS flash by UID. |
+| `users/<token>/doors/<uid>/enroll/ack` | `security/door/enroll/ack` | Access Node | Web Dashboard | JSON Object | No | 1 | Storage/deletion status acknowledgment. |
+| `users/<token>/doors/<uid>/enroll/list` | `security/door/enroll/list` | Access Node | Web Dashboard | JSON Array | No | 1 | Array of all registered cards and labels. |
 | `users/<token>/cameras/<uid>/discovery` | `security/camera/discovery` | Vision Node | Web Dashboard, AI | JSON Object | **Yes** | 1 | Local stream IP/port discovery broadcast. |
 | `users/<token>/cameras/<uid>/status` | `security/camera/status` | Vision Node | Web Dashboard, AI | String (`"ONLINE"` / `"OFFLINE"`) | **Yes** | 1 | Availability status (LWT). |
 | `users/<token>/cameras/<uid>/relay_url` | `security/camera/relay_url` | AI Processor | Web Dashboard | JSON Object | **Yes** | 1 | Public HTTPS relay URL via Cloudflare Tunnel. |
@@ -201,4 +207,40 @@ Published by the Python AI Processor when OpenCV detects human presence in the M
   "timestamp": "2026-09-12T14:15:00Z",
   "bbox": [120, 80, 210, 360]
 }
+```
+
+---
+
+### 7. Dynamic RFID Card Enrollment Topics
+
+Used to manage NVS-backed RFID whitelists remotely between the Web Dashboard and Access Node.
+
+#### A. `security/door/enroll/request`
+Sent by dashboard to start card scanning mode (active for 30s) or request current card list.
+- **Payload:** `{"action": "start"}` or `{"action": "list"}`
+
+#### B. `security/door/enroll/scan`
+Published by the Access Node when an RFID card is presented during active enrollment mode.
+- **Payload:** `{"uid": "AA:BB:CC:DD"}`
+
+#### C. `security/door/enroll/confirm`
+Sent by dashboard to assign a label and persist the scanned card into the ESP32 NVS flash (`door-cards` namespace).
+- **Payload:** `{"uid": "AA:BB:CC:DD", "label": "Athira Card"}`
+
+#### D. `security/door/enroll/delete`
+Sent by dashboard to remove a card from the whitelist.
+- **Payload:** `{"uid": "AA:BB:CC:DD"}`
+
+#### E. `security/door/enroll/ack`
+Published by Access Node to confirm registry mutations.
+- **Payload:** `{"status": "saved"|"deleted"|"error", "uid": "...", "label": "...", "message": "..."}`
+
+#### F. `security/door/enroll/list`
+Published by Access Node on initial connection and after any registry change.
+- **Payload:** JSON Array of registered cards:
+```json
+[
+  {"uid": "B4:A1:9F:32", "label": "Athira Tag"},
+  {"uid": "E2:4C:19:8A", "label": "Backup Fob"}
+]
 ```
